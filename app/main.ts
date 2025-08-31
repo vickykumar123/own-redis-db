@@ -11,7 +11,7 @@ const server: net.Server = net.createServer((socket: net.Socket) => {
     socket.write("+PONG\r\n");
   });
   //   socket.write("+PONG\r\n");
-  socket.end();
+  //   socket.end();
 });
 //
 server.listen(6379, "127.0.0.1");
