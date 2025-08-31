@@ -10,7 +10,7 @@ const server: net.Server = net.createServer((socket: net.Socket) => {
     const command = data.toString().trim();
     socket.write("+PONG\r\n");
   });
-  socket.write("+PONG\r\n");
+  //   socket.write("+PONG\r\n");
   socket.end();
 });
 //
