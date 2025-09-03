@@ -38,6 +38,8 @@ export class RedisCommands {
         response = this.handleGet(args);
         break;
       case "RPUSH":
+        response = this.handleRPush(args);
+        break;
 
       default:
         response = encodeError(`ERR unknown command '${command}'`);
@@ -106,18 +108,24 @@ export class RedisCommands {
     let entry = this.kvStore.get(key);
 
     if (entry) {
-      this.kvStore.set(key, {
-        value: Array.isArray(entry.value)
-          ? entry.value.push(...values) // Append to existing list
-          : values, // Overwrite if not a list
-        expiry: entry.expiry, // Preserve expiry if any
-      });
+      // If existing value is an array, append to it
+      if (Array.isArray(entry.value)) {
+        entry.value.push(...values); // Append values to existing array
+        this.kvStore.set(key, entry); // Update store
+      } else {
+        // If not an array, create new array with old value + new values
+        const newArray = [entry.value as string, ...values];
+        this.kvStore.set(key, {value: newArray, expiry: entry.expiry});
+      }
     } else {
+      // Create new list
       this.kvStore.set(key, {value: values});
     }
-    const newLength = Array.isArray(this.kvStore.get(key)?.value)
-      ? this.kvStore.get(key)!.value.length
-      : values.length;
+
+    const currentEntry = this.kvStore.get(key)!;
+    const newLength = Array.isArray(currentEntry.value)
+      ? currentEntry.value.length
+      : 0;
     return encodeInteger(newLength); // RESP Integer for new list length
   }
 
