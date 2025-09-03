@@ -130,11 +130,16 @@ export function parseRESPCommand(data: Buffer): ParsedCommand | null {
   }
 }
 
-export function encodeBulkString(value: string): string {
+export function encodeBulkString(value: string | null): string {
   if (value === null) {
-    return "$-1\r\n";
+    return "$-1\r\n"; // Null bulk string: $-1\r\n
   }
-  return `$${value.length}\r\n${value}\r\n`;
+  return `$${value.length}\r\n${value}\r\n`; // Regular bulk string: $length\r\nvalue\r\n
+}
+
+// Alternative: Separate function for clarity
+export function encodeNullBulkString(): string {
+  return "$-1\r\n";
 }
 
 export function encodeSimpleString(value: string): string {

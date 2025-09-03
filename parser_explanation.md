@@ -216,4 +216,71 @@ Final result: ["ECHO", "hey"]
 4. **Streaming Ready**: Designed to handle partial messages efficiently
 5. **Type-Driven**: First byte determines entire parsing strategy
 
+## Handling Null Values in Bulk Strings
+
+### The Problem
+
+In Redis, null values are represented differently for different data types:
+
+- **Null Bulk String**: `$-1\r\n` (length -1)
+- **Null Array**: `*-1\r\n` (length -1)
+- **Null Simple String**: Doesn't exist in RESP
+
+### Correct Null Handling in encodeBulkString()
+
+```typescript
+export function encodeBulkString(value: string | null): string {
+  if (value === null) {
+    return "$-1\r\n"; // Null bulk string: $-1\r\n
+  }
+  return `$${value.length}\r\n${value}\r\n`; // Regular bulk string: $length\r\nvalue\r\n
+}
+```
+
+### Why TypeScript Union Type Matters
+
+**Before (TypeScript Error):**
+
+```typescript
+export function encodeBulkString(value: string): string {
+  if (value === null) {
+    // ❌ This will never be true!
+    return "$-1\r\n";
+  }
+  return `$${value.length}\r\n${value}\r\n`;
+}
+```
+
+**After (Correct):**
+
+```typescript
+export function encodeBulkString(value: string | null): string {
+  if (value === null) {
+    // ✅ Now properly checks for null
+    return "$-1\r\n";
+  }
+  return `$${value.length}\r\n${value}\r\n`; // TypeScript knows value is string here
+}
+```
+
+### Usage Examples
+
+```typescript
+encodeBulkString("hello"); // → "$5\r\nhello\r\n"
+encodeBulkString(null); // → "$-1\r\n"
+encodeBulkString(""); // → "$0\r\n\r\n" (empty string, not null)
+```
+
+### Alternative Approach: Separate Functions
+
+```typescript
+export function encodeBulkString(value: string): string {
+  return `$${value.length}\r\n${value}\r\n`;
+}
+
+export function encodeNullBulkString(): string {
+  return "$-1\r\n";
+}
+```
+
 This design allows efficient, robust parsing of Redis protocol messages while maintaining minimal memory overhead and maximum extensibility for future RESP features.
