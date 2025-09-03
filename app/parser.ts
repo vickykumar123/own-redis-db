@@ -153,3 +153,17 @@ export function encodeError(message: string): string {
 export function encodeInteger(value: number): string {
   return `:${value}\r\n`;
 }
+
+export function encodeArray(elements: (string | null)[]): string {
+  if (elements === null) {
+    return "*-1\r\n"; // Null array
+  }
+
+  let response = `*${elements.length}\r\n`; // Array length
+
+  for (const element of elements) {
+    response += encodeBulkString(element); // Each element as bulk string
+  }
+
+  return response;
+}

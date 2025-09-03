@@ -3,6 +3,7 @@ import {
   encodeSimpleString,
   encodeError,
   encodeInteger,
+  encodeArray,
 } from "./parser";
 import * as net from "net";
 
@@ -40,7 +41,9 @@ export class RedisCommands {
       case "RPUSH":
         response = this.handleRPush(args);
         break;
-
+      case "LRANGE":
+        response = this.handleLRange(args);
+        break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
     }
@@ -127,6 +130,56 @@ export class RedisCommands {
       ? currentEntry.value.length
       : 0;
     return encodeInteger(newLength); // RESP Integer for new list length
+  }
+
+  private handleLRange(args: string[]): string {
+    if (args.length !== 3) {
+      return encodeError("ERR wrong number of arguments for 'lrange' command");
+    }
+
+    const [key, startStr, stopStr] = args;
+    const start = parseInt(startStr);
+    const stop = parseInt(stopStr);
+
+    if (isNaN(start) || isNaN(stop)) {
+      return encodeError("ERR value is not an integer or out of range");
+    }
+
+    const entry = this.kvStore.get(key);
+    if (!entry || !Array.isArray(entry.value)) {
+      return encodeArray([]); // Case 1: Non-existent list → empty array
+    }
+
+    const list = entry.value as string[];
+    const listLength = list.length;
+
+    // Handle negative indices (Redis behavior: -1 = last element)
+    let normalizedStart = start < 0 ? listLength + start : start;
+    let normalizedStop = stop < 0 ? listLength + stop : stop;
+
+    // Clamp start to valid range: 0 to listLength
+    normalizedStart = Math.max(0, Math.min(normalizedStart, listLength));
+
+    // Clamp stop: for negative indices allow -1, for positive allow any value
+    if (stop < 0) {
+      normalizedStop = Math.max(-1, normalizedStop);
+    } else {
+      normalizedStop = Math.max(normalizedStop, -1); // Allow any positive value
+    }
+
+    // Case 4: start > stop → empty array
+    if (normalizedStart > normalizedStop) {
+      return encodeArray([]);
+    }
+
+    // Case 2: start >= list length → empty array
+    if (listLength === 0 || normalizedStart >= listLength) {
+      return encodeArray([]);
+    }
+
+    // Get the slice (slice is inclusive of end index in 2nd param)
+    const result = list.slice(normalizedStart, normalizedStop + 1);
+    return encodeArray(result);
   }
 
   // ===== UTILITY METHODS =====
