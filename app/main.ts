@@ -1,5 +1,9 @@
 // Simple in-memory key-value store
-const kvStore = new Map<string, string>();
+interface IkvStore {
+  value: string;
+  expiry?: number;
+}
+const kvStore = new Map<string, IkvStore>();
 
 import * as net from "net";
 import {
@@ -41,30 +45,29 @@ const server: net.Server = net.createServer((socket: net.Socket) => {
           break;
 
         case "SET":
-          if (args.length !== 2) {
-            socket.write(
-              encodeError("ERR wrong number of arguments for 'set' command")
-            );
-            return;
+          if (args.length === 2) {
+            // SET key value (no expiry)
+            kvStore.set(args[0], {value: args[1]});
+          } else if (args.length === 4 && args[2].toUpperCase() === "PX") {
+            // SET key value PX milliseconds
+            const px = parseInt(args[3]);
+            const expiry = Date.now() + px;
+            kvStore.set(args[0], {value: args[1], expiry});
+          } else {
+            return encodeError("ERR syntax error");
           }
-          kvStore.set(args[0], args[1]);
-          socket.write(encodeSimpleString("OK"));
-          break;
+          return encodeSimpleString("OK");
 
         case "GET":
-          if (args.length !== 1) {
-            socket.write(
-              encodeError("ERR wrong number of arguments for 'get' command")
-            );
-            return;
+          const entry = kvStore.get(args[0]);
+          if (!entry) return encodeBulkString(null);
+
+          if (entry.expiry && Date.now() > entry.expiry) {
+            kvStore.delete(args[0]); // Optional cleanup
+            return encodeBulkString(null);
           }
-          const value = kvStore.get(args[0]);
-          if (value === undefined) {
-            socket.write(encodeBulkString(null));
-          } else {
-            socket.write(encodeBulkString(value));
-          }
-          break;
+
+          return encodeBulkString(entry.value);
 
         default:
           socket.write(encodeError(`ERR unknown command '${command}'`));
