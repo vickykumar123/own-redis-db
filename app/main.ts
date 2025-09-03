@@ -1,3 +1,6 @@
+// Simple in-memory key-value store
+const kvStore = new Map<string, string>();
+
 import * as net from "net";
 import {
   parseRESPCommand,
@@ -21,7 +24,7 @@ const server: net.Server = net.createServer((socket: net.Socket) => {
       }
 
       const {command, args} = parsedCommand;
-      const mapping: any = {}; // In-memory key-value store
+
       switch (command) {
         case "PING":
           socket.write(encodeSimpleString("PONG"));
@@ -36,16 +39,18 @@ const server: net.Server = net.createServer((socket: net.Socket) => {
           }
           socket.write(encodeBulkString(args[0]));
           break;
+
         case "SET":
-          if (args.length < 2) {
+          if (args.length !== 2) {
             socket.write(
               encodeError("ERR wrong number of arguments for 'set' command")
             );
             return;
           }
-          mapping[args[0]] = args[1];
+          kvStore.set(args[0], args[1]);
           socket.write(encodeSimpleString("OK"));
           break;
+
         case "GET":
           if (args.length !== 1) {
             socket.write(
@@ -53,13 +58,14 @@ const server: net.Server = net.createServer((socket: net.Socket) => {
             );
             return;
           }
-          const value = mapping[args[0]];
+          const value = kvStore.get(args[0]);
           if (value === undefined) {
             socket.write(encodeBulkString(null));
           } else {
             socket.write(encodeBulkString(value));
           }
           break;
+
         default:
           socket.write(encodeError(`ERR unknown command '${command}'`));
           break;
