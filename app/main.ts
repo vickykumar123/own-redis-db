@@ -54,21 +54,26 @@ const server: net.Server = net.createServer((socket: net.Socket) => {
             const expiry = Date.now() + px;
             kvStore.set(args[0], {value: args[1], expiry});
           } else {
-            return encodeError("ERR syntax error");
+            socket.write(encodeError("ERR syntax error"));
+            return;
           }
-          return encodeSimpleString("OK");
-
+          socket.write(encodeSimpleString("OK"));
+          break;
         case "GET":
           const entry = kvStore.get(args[0]);
-          if (!entry) return encodeBulkString(null);
+          if (!entry) {
+            socket.write(encodeBulkString(null));
+            return;
+          }
 
           if (entry.expiry && Date.now() > entry.expiry) {
             kvStore.delete(args[0]); // Optional cleanup
-            return encodeBulkString(null);
+            socket.write(encodeBulkString(null));
+            return;
           }
 
-          return encodeBulkString(entry.value);
-
+          socket.write(encodeBulkString(entry.value));
+          break;
         default:
           socket.write(encodeError(`ERR unknown command '${command}'`));
           break;
