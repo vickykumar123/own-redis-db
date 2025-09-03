@@ -283,4 +283,43 @@ export function encodeNullBulkString(): string {
 }
 ```
 
+## Complete RESP Encoder Functions
+
+Now that we've added `encodeInteger`, here's the complete set of RESP encoders:
+
+### 1. **Simple Strings** (`encodeSimpleString`)
+
+```typescript
+encodeSimpleString("OK"); // → "+OK\r\n"
+encodeSimpleString("PONG"); // → "+PONG\r\n"
+```
+
+### 2. **Bulk Strings** (`encodeBulkString`)
+
+```typescript
+encodeBulkString("hello"); // → "$5\r\nhello\r\n"
+encodeBulkString(null); // → "$-1\r\n" (null)
+encodeBulkString(""); // → "$0\r\n\r\n" (empty)
+```
+
+### 3. **Integers** (`encodeInteger`) ⭐ _NEW_
+
+```typescript
+encodeInteger(123); // → ":123\r\n"
+encodeInteger(0); // → ":0\r\n"
+encodeInteger(-42); // → ":-42\r\n"
+```
+
+### 4. **Errors** (`encodeError`)
+
+```typescript
+encodeError("ERR syntax error"); // → "-ERR syntax error\r\n"
+```
+
+### 5. **Special Functions**
+
+```typescript
+encodeNullBulkString(); // → "$-1\r\n"
+```
+
 This design allows efficient, robust parsing of Redis protocol messages while maintaining minimal memory overhead and maximum extensibility for future RESP features.

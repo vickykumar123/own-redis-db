@@ -149,3 +149,7 @@ export function encodeSimpleString(value: string): string {
 export function encodeError(message: string): string {
   return `-${message}\r\n`;
 }
+
+export function encodeInteger(value: number): string {
+  return `:${value}\r\n`;
+}

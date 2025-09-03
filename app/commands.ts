@@ -1,9 +1,14 @@
-import {encodeBulkString, encodeSimpleString, encodeError} from "./parser";
+import {
+  encodeBulkString,
+  encodeSimpleString,
+  encodeError,
+  encodeInteger,
+} from "./parser";
 import * as net from "net";
 
 // Enhanced key-value store with expiry support
 export interface KeyValueEntry {
-  value: string;
+  value: any;
   expiry?: number; // Timestamp when key expires (Date.now() + px)
 }
 
@@ -32,6 +37,8 @@ export class RedisCommands {
       case "GET":
         response = this.handleGet(args);
         break;
+      case "RPUSH":
+
       default:
         response = encodeError(`ERR unknown command '${command}'`);
     }
@@ -88,6 +95,30 @@ export class RedisCommands {
     }
 
     return encodeBulkString(entry.value);
+  }
+
+  private handleRPush(args: string[]): string {
+    if (args.length < 2) {
+      return encodeError("ERR wrong number of arguments for 'rpush' command");
+    }
+    const key = args[0];
+    const values = args.slice(1); // can be multiple values
+    let entry = this.kvStore.get(key);
+
+    if (entry) {
+      this.kvStore.set(key, {
+        value: Array.isArray(entry.value)
+          ? entry.value.push(...values) // Append to existing list
+          : values, // Overwrite if not a list
+        expiry: entry.expiry, // Preserve expiry if any
+      });
+    } else {
+      this.kvStore.set(key, {value: values});
+    }
+    const newLength = Array.isArray(this.kvStore.get(key)?.value)
+      ? this.kvStore.get(key)!.value.length
+      : values.length;
+    return encodeInteger(newLength); // RESP Integer for new list length
   }
 
   // ===== UTILITY METHODS =====
