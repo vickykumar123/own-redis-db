@@ -190,7 +190,7 @@ export class RedisCommands {
       return encodeError("ERR wrong number of arguments for 'lpush' command");
     }
     const key = args[0];
-    const values = args.slice(1); // can be multiple values
+    const values = args.slice(1).reverse(); // can be multiple values
     let entry = this.kvStore.get(key);
     if (entry) {
       // If existing value is an array, prepend to it
