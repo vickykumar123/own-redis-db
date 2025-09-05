@@ -13,8 +13,17 @@ export interface KeyValueEntry {
   expiry?: number; // Timestamp when key expires (Date.now() + px)
 }
 
+// Blocked client information
+interface BlockedClient {
+  socket: net.Socket;
+  keys: string[];
+  timeout: number;
+  startTime: number;
+}
+
 export class RedisCommands {
   private kvStore: Map<string, KeyValueEntry>;
+  private blockedClients: BlockedClient[] = [];
 
   constructor() {
     this.kvStore = new Map<string, KeyValueEntry>();
@@ -53,6 +62,9 @@ export class RedisCommands {
       case "LPOP":
         response = this.handleLPop(args);
         break;
+      case "BLPOP":
+        this.handleBLPop(args, socket);
+        return; // Don't write response for blocking commands
       default:
         response = encodeError(`ERR unknown command '${command}'`);
     }
@@ -134,6 +146,9 @@ export class RedisCommands {
       this.kvStore.set(key, {value: values});
     }
 
+    // Check for blocked clients after adding elements
+    this.checkBlockedClients(key);
+
     const currentEntry = this.kvStore.get(key)!;
     const newLength = Array.isArray(currentEntry.value)
       ? currentEntry.value.length
@@ -212,6 +227,10 @@ export class RedisCommands {
       // Create new list
       this.kvStore.set(key, {value: values});
     }
+
+    // Check for blocked clients after adding elements
+    this.checkBlockedClients(key);
+
     return encodeInteger((this.kvStore.get(key)?.value as string[]).length); // RESP Integer for new list length
   }
 
@@ -255,6 +274,92 @@ export class RedisCommands {
     const poppedValue = list.shift()!; // Remove and get the first element
     this.kvStore.set(key, {value: list, expiry: entry.expiry});
     return encodeBulkString(poppedValue);
+  }
+
+  private handleBLPop(args: string[], socket: net.Socket): void {
+    if (args.length < 2) {
+      socket.write(
+        encodeError("ERR wrong number of arguments for 'blpop' command")
+      );
+      return;
+    }
+
+    // BLPOP key [key ...] timeout
+    const keys = args.slice(0, -1);
+    const timeoutStr = args[args.length - 1];
+    const timeout = parseInt(timeoutStr);
+
+    if (isNaN(timeout) || timeout < 0) {
+      socket.write(encodeError("ERR invalid timeout"));
+      return;
+    }
+
+    // Check if any key has an element available
+    for (const key of keys) {
+      const entry = this.kvStore.get(key);
+      if (entry && Array.isArray(entry.value) && entry.value.length > 0) {
+        const list = entry.value as string[];
+        const poppedValue = list.shift()!;
+        this.kvStore.set(key, {value: list, expiry: entry.expiry});
+
+        // Return RESP array: [key, element]
+        const response = encodeArray([key, poppedValue]);
+        socket.write(response);
+        return;
+      }
+    }
+
+    // No elements available, need to block
+    const blockedClient: BlockedClient = {
+      socket,
+      keys,
+      timeout,
+      startTime: Date.now(),
+    };
+
+    this.blockedClients.push(blockedClient);
+
+    // Set timeout if not indefinite (timeout > 0)
+    if (timeout > 0) {
+      setTimeout(() => {
+        // Check if client is still blocked
+        const index = this.blockedClients.indexOf(blockedClient);
+        if (index !== -1) {
+          // Remove from blocked clients
+          this.blockedClients.splice(index, 1);
+          // Send null response for timeout
+          socket.write(encodeBulkString(null));
+        }
+      }, timeout * 1000);
+    }
+    // If timeout is 0, client stays blocked indefinitely
+  }
+
+  private checkBlockedClients(key: string): void {
+    // Find the oldest blocked client that is waiting for this key
+    for (let i = 0; i < this.blockedClients.length; i++) {
+      const blockedClient = this.blockedClients[i];
+      if (blockedClient.keys.includes(key)) {
+        // Found a blocked client waiting for this key
+        // Remove the client from blocked list
+        this.blockedClients.splice(i, 1);
+
+        // Get the element from the list
+        const entry = this.kvStore.get(key);
+        if (entry && Array.isArray(entry.value) && entry.value.length > 0) {
+          const list = entry.value as string[];
+          const poppedValue = list.shift()!;
+          this.kvStore.set(key, {value: list, expiry: entry.expiry});
+
+          // Send response to the blocked client
+          const response = encodeArray([key, poppedValue]);
+          blockedClient.socket.write(response);
+        }
+
+        // Only unblock the first (oldest) client
+        break;
+      }
+    }
   }
 
   // ===== UTILITY METHODS =====
