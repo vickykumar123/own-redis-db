@@ -65,6 +65,9 @@ export class RedisCommands {
       case "BLPOP":
         this.handleBLPop(args, socket);
         return; // Don't write response for blocking commands
+      case "TYPE":
+        response = this.handleType(args);
+        break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
     }
@@ -338,6 +341,21 @@ export class RedisCommands {
       }, timeout * 1000);
     }
     // If timeout is 0, client stays blocked indefinitely
+  }
+
+  private handleType(args: string[]): string {
+    if (args.length !== 1) {
+      return encodeError("ERR wrong number of arguments for 'type' command");
+    }
+    const key = args[0];
+    const entry = this.kvStore.get(key);
+    if (!entry) {
+      return encodeSimpleString("none");
+    }
+    if (Array.isArray(entry.value)) {
+      return encodeSimpleString("list");
+    }
+    return encodeSimpleString("string");
   }
 
   private checkBlockedClients(key: string): void {
