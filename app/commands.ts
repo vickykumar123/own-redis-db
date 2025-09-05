@@ -237,11 +237,12 @@ export class RedisCommands {
       return encodeBulkString(null); // Non-existent list or empty list
     }
     const list = entry.value as string[];
-    const numberOfElementsToPop = args.length === 2 ? parseInt(args[1]) : 0;
-    if (isNaN(numberOfElementsToPop) || numberOfElementsToPop <= 0) {
-      return encodeError("ERR value is not an integer or out of range");
-    }
-    if (numberOfElementsToPop) {
+    const hasCountArg = args.length === 2;
+    if (hasCountArg) {
+      const numberOfElementsToPop = parseInt(args[1]);
+      if (isNaN(numberOfElementsToPop) || numberOfElementsToPop <= 0) {
+        return encodeError("ERR value is not an integer or out of range");
+      }
       const elementsPoped = [];
       for (let i = 0; i < numberOfElementsToPop; i++) {
         if (list.length === 0) break;
