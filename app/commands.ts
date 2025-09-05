@@ -50,6 +50,9 @@ export class RedisCommands {
       case "LLEN":
         response = this.handleLLen(args);
         break;
+      case "LPOP":
+        response = this.handleLPop(args);
+        break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
     }
@@ -222,6 +225,21 @@ export class RedisCommands {
       return encodeInteger(0); // Non-existent list or not a list
     }
     return encodeInteger(entry.value.length);
+  }
+
+  private handleLPop(args: string[]): string {
+    if (args.length !== 1) {
+      return encodeError("ERR wrong number of arguments for 'lpop' command");
+    }
+    const key = args[0];
+    const entry = this.kvStore.get(key);
+    if (!entry || !Array.isArray(entry.value) || entry.value.length === 0) {
+      return encodeBulkString(null); // Non-existent list or empty list
+    }
+    const list = entry.value as string[];
+    const poppedValue = list.shift()!; // Remove and get the first element
+    this.kvStore.set(key, {value: list, expiry: entry.expiry});
+    return encodeBulkString(poppedValue);
   }
 
   // ===== UTILITY METHODS =====
