@@ -292,7 +292,7 @@ export class RedisCommands {
     // BLPOP key [key ...] timeout
     const keys = args.slice(0, -1);
     const timeoutStr = args[args.length - 1];
-    const timeout = parseInt(timeoutStr);
+    const timeout = parseFloat(timeoutStr);
 
     if (isNaN(timeout) || timeout < 0) {
       socket.write(encodeError("ERR invalid timeout"));
@@ -335,7 +335,7 @@ export class RedisCommands {
           // Send null response for timeout
           socket.write(encodeBulkString(null));
         }
-      }, timeout);
+      }, timeout * 1000);
     }
     // If timeout is 0, client stays blocked indefinitely
   }
