@@ -44,6 +44,9 @@ export class RedisCommands {
       case "LRANGE":
         response = this.handleLRange(args);
         break;
+      case "LPUSH":
+        response = this.handleLPush(args);
+        break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
     }
@@ -180,6 +183,30 @@ export class RedisCommands {
     // Get the slice (slice is inclusive of end index in 2nd param)
     const result = list.slice(normalizedStart, normalizedStop + 1);
     return encodeArray(result);
+  }
+
+  private handleLPush(args: string[]): string {
+    if (args.length < 2) {
+      return encodeError("ERR wrong number of arguments for 'lpush' command");
+    }
+    const key = args[0];
+    const values = args.slice(1); // can be multiple values
+    let entry = this.kvStore.get(key);
+    if (entry) {
+      // If existing value is an array, prepend to it
+      if (Array.isArray(entry.value)) {
+        entry.value.unshift(...values); // Prepend values to existing array
+        this.kvStore.set(key, entry); // Update store
+      } else {
+        // If not an array, create new array with old value + new values
+        const newArray = [...values, entry.value as string];
+        this.kvStore.set(key, {value: newArray, expiry: entry.expiry});
+      }
+    } else {
+      // Create new list
+      this.kvStore.set(key, {value: values});
+    }
+    return encodeInteger((this.kvStore.get(key)?.value as string[]).length); // RESP Integer for new list length
   }
 
   // ===== UTILITY METHODS =====
