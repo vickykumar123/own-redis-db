@@ -47,6 +47,9 @@ export class RedisCommands {
       case "LPUSH":
         response = this.handleLPush(args);
         break;
+      case "LLEN":
+        response = this.handleLLen(args);
+        break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
     }
@@ -207,6 +210,18 @@ export class RedisCommands {
       this.kvStore.set(key, {value: values});
     }
     return encodeInteger((this.kvStore.get(key)?.value as string[]).length); // RESP Integer for new list length
+  }
+
+  private handleLLen(args: string[]): string {
+    if (args.length !== 1) {
+      return encodeError("ERR wrong number of arguments for 'llen' command");
+    }
+    const key = args[0];
+    const entry = this.kvStore.get(key);
+    if (!entry || !Array.isArray(entry.value)) {
+      return encodeInteger(0); // Non-existent list or not a list
+    }
+    return encodeInteger(entry.value.length);
   }
 
   // ===== UTILITY METHODS =====
