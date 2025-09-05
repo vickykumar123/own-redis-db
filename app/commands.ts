@@ -243,7 +243,7 @@ export class RedisCommands {
     }
     if (numberOfElementsToPop) {
       const elementsPoped = [];
-      for (let i = 1; i < numberOfElementsToPop; i++) {
+      for (let i = 0; i < numberOfElementsToPop; i++) {
         if (list.length === 0) break;
         elementsPoped.push(list.shift()!);
       }
