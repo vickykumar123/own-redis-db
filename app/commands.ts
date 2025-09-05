@@ -130,30 +130,30 @@ export class RedisCommands {
     const key = args[0];
     const values = args.slice(1); // can be multiple values
     let entry = this.kvStore.get(key);
+    let newLength = 0;
 
     if (entry) {
       // If existing value is an array, append to it
       if (Array.isArray(entry.value)) {
         entry.value.push(...values); // Append values to existing array
         this.kvStore.set(key, entry); // Update store
+        newLength = entry.value.length;
       } else {
         // If not an array, create new array with old value + new values
         const newArray = [entry.value as string, ...values];
         this.kvStore.set(key, {value: newArray, expiry: entry.expiry});
+        newLength = newArray.length;
       }
     } else {
       // Create new list
       this.kvStore.set(key, {value: values});
+      newLength = values.length;
     }
 
     // Check for blocked clients after adding elements
     this.checkBlockedClients(key);
 
-    const currentEntry = this.kvStore.get(key)!;
-    const newLength = Array.isArray(currentEntry.value)
-      ? currentEntry.value.length
-      : 0;
-    return encodeInteger(newLength); // RESP Integer for new list length
+    return encodeInteger(newLength); // Return length BEFORE checking blocked clients
   }
 
   private handleLRange(args: string[]): string {
@@ -213,25 +213,30 @@ export class RedisCommands {
     const key = args[0];
     const values = args.slice(1).reverse(); // can be multiple values
     let entry = this.kvStore.get(key);
+    let newLength = 0;
+
     if (entry) {
       // If existing value is an array, prepend to it
       if (Array.isArray(entry.value)) {
         entry.value.unshift(...values); // Prepend values to existing array
         this.kvStore.set(key, entry); // Update store
+        newLength = entry.value.length;
       } else {
         // If not an array, create new array with old value + new values
         const newArray = [...values, entry.value as string];
         this.kvStore.set(key, {value: newArray, expiry: entry.expiry});
+        newLength = newArray.length;
       }
     } else {
       // Create new list
       this.kvStore.set(key, {value: values});
+      newLength = values.length;
     }
 
     // Check for blocked clients after adding elements
     this.checkBlockedClients(key);
 
-    return encodeInteger((this.kvStore.get(key)?.value as string[]).length); // RESP Integer for new list length
+    return encodeInteger(newLength); // Return length BEFORE checking blocked clients
   }
 
   private handleLLen(args: string[]): string {
