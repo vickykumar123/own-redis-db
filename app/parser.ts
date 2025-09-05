@@ -154,7 +154,7 @@ export function encodeInteger(value: number): string {
   return `:${value}\r\n`;
 }
 
-export function encodeArray(elements: (string | null)[]): string {
+export function encodeArray(elements: (string | null)[] | null): string {
   if (elements === null) {
     return "*-1\r\n"; // Null array
   }

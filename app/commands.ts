@@ -333,7 +333,7 @@ export class RedisCommands {
           // Remove from blocked clients
           this.blockedClients.splice(index, 1);
           // Send null response for timeout
-          socket.write(encodeBulkString(null));
+          socket.write(encodeArray(null));
         }
       }, timeout * 1000);
     }
