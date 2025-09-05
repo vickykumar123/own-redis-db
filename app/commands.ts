@@ -228,7 +228,7 @@ export class RedisCommands {
   }
 
   private handleLPop(args: string[]): string {
-    if (args.length !== 1) {
+    if (args.length < 1) {
       return encodeError("ERR wrong number of arguments for 'lpop' command");
     }
     const key = args[0];
@@ -237,6 +237,20 @@ export class RedisCommands {
       return encodeBulkString(null); // Non-existent list or empty list
     }
     const list = entry.value as string[];
+    const numberOfElementsToPop = args.length === 2 ? parseInt(args[1]) : 0;
+    if (isNaN(numberOfElementsToPop) || numberOfElementsToPop <= 0) {
+      return encodeError("ERR value is not an integer or out of range");
+    }
+    if (numberOfElementsToPop) {
+      const elementsPoped = [];
+      for (let i = 1; i < numberOfElementsToPop; i++) {
+        if (list.length === 0) break;
+        elementsPoped.push(list.shift()!);
+      }
+      this.kvStore.set(key, {value: list, expiry: entry.expiry});
+      return encodeArray(elementsPoped);
+    }
+
     const poppedValue = list.shift()!; // Remove and get the first element
     this.kvStore.set(key, {value: list, expiry: entry.expiry});
     return encodeBulkString(poppedValue);
