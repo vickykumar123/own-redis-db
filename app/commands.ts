@@ -335,7 +335,7 @@ export class RedisCommands {
           // Send null response for timeout
           socket.write(encodeBulkString(null));
         }
-      }, timeout * 1000);
+      }, timeout);
     }
     // If timeout is 0, client stays blocked indefinitely
   }
