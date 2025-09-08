@@ -13,6 +13,13 @@ import {ListCommands} from "./commands/list-commands";
 export interface KeyValueEntry {
   value: any;
   expiry?: number; // Timestamp when key expires (Date.now() + px)
+  type?: "string" | "list" | "stream"; // Optional type field
+}
+
+// Stream entry interface
+export interface StreamEntry {
+  id: string; // Entry ID
+  fields: Map<string, string>; // Field-value pairs
 }
 
 export class RedisCommands {
@@ -95,6 +102,11 @@ export class RedisCommands {
     if (Array.isArray(entry.value)) {
       return encodeSimpleString("list");
     }
+
+    if (entry.type === "stream") {
+      return encodeSimpleString("stream");
+    }
+
     return encodeSimpleString("string");
   }
   // ===== UTILITY METHODS =====
