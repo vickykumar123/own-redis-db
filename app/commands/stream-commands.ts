@@ -61,10 +61,15 @@ export class StreamCommands {
     const streamEntry = this.kvStore.get(key)!;
 
     const [timeStr, seqStr] = id.split("-");
-    const isAutoSeq = seqStr === "*";
+    const isAutoSeq = timeStr !== "*" && seqStr === "*";
+    const isFullyAuto = timeStr === "*";
     let finalId = id;
 
-    if (isAutoSeq) {
+    if (isFullyAuto) {
+      const timeMs = Date.now();
+      const seqNum = this.generateSequenceNumber(streamEntry, timeMs);
+      finalId = `${timeMs}-${seqNum}`;
+    } else if (isAutoSeq) {
       const timeMs = parseInt(timeStr);
       if (isNaN(timeMs)) {
         return encodeError("ERR Invalid stream ID specified as argument");
