@@ -54,11 +54,11 @@ export class StreamCommands {
 
     const [key, id, ...fieldsValues] = args;
 
-    const entry = this.kvStore.get(key);
-    if (!entry) {
-      // Create new entry
+    // Ensure stream exists
+    if (!this.kvStore.has(key)) {
       this.kvStore.set(key, {value: [], type: "stream"});
     }
+    const streamEntry = this.kvStore.get(key)!;
 
     const [timeStr, seqStr] = id.split("-");
     const isAutoSeq = seqStr === "*";
@@ -70,12 +70,9 @@ export class StreamCommands {
         return encodeError("ERR Invalid stream ID specified as argument");
       }
 
-      // Get the current entry (now guaranteed to exist after creation above)
-      const currentEntry = this.kvStore.get(key)!;
-
       // Validate time part against existing entries
-      if (currentEntry.value.length > 0) {
-        const lastEntry = currentEntry.value[currentEntry.value.length - 1];
+      if (streamEntry.value.length > 0) {
+        const lastEntry = streamEntry.value[streamEntry.value.length - 1];
         const [lastMs] = lastEntry.id.split("-").map(Number);
 
         if (timeMs < lastMs) {
@@ -84,7 +81,6 @@ export class StreamCommands {
           );
         }
 
-        // Special case: if timeMs === 0 and we have any entries, it's invalid
         if (timeMs === 0) {
           return encodeError(
             "ERR The ID specified in XADD must be greater than 0-0"
@@ -92,29 +88,25 @@ export class StreamCommands {
         }
       }
 
-      // Generate sequence number
-      const seqNum = this.generateSequenceNumber(currentEntry, timeMs);
+      const seqNum = this.generateSequenceNumber(streamEntry, timeMs);
       finalId = `${timeMs}-${seqNum}`;
     } else {
-      // validation of ID
-      if (entry && entry.value.length > 0) {
-        const error = this.idValidation(entry, id);
+      if (streamEntry.value.length > 0) {
+        const error = this.idValidation(streamEntry, id);
         if (error) return error;
       }
     }
 
-    // create the entry
     const fieldMap = new Map<string, string>();
     for (let i = 0; i < fieldsValues.length; i += 2) {
       fieldMap.set(fieldsValues[i], fieldsValues[i + 1]);
     }
 
-    const streamEntry = {
+    const newEntry = {
       id: finalId,
       fields: fieldMap,
     };
-    const currentEntry = this.kvStore.get(key)!;
-    currentEntry.value.push(streamEntry);
+    streamEntry.value.push(newEntry);
 
     return encodeBulkString(finalId);
   }
