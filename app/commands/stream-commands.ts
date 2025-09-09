@@ -62,7 +62,7 @@ export class StreamCommands {
 
     const [timeStr, seqStr] = id.split("-");
     const isAutoSeq = seqStr === "*";
-    const finalId = id === "*" ? "0-0" : id;
+    let finalId = id;
 
     if (isAutoSeq) {
       const timeMs = parseInt(timeStr);
@@ -70,9 +70,12 @@ export class StreamCommands {
         return encodeError("ERR Invalid stream ID specified as argument");
       }
 
+      // Get the current entry (now guaranteed to exist after creation above)
+      const currentEntry = this.kvStore.get(key)!;
+
       // Validate time part against existing entries
-      if (entry && entry.value.length > 0) {
-        const lastEntry = entry.value[entry.value.length - 1];
+      if (currentEntry.value.length > 0) {
+        const lastEntry = currentEntry.value[currentEntry.value.length - 1];
         const [lastMs] = lastEntry.id.split("-").map(Number);
 
         if (timeMs < lastMs) {
@@ -90,8 +93,8 @@ export class StreamCommands {
       }
 
       // Generate sequence number
-      const seqNum = this.generateSequenceNumber(entry!, timeMs);
-      const finalId = `${timeMs}-${seqNum}`;
+      const seqNum = this.generateSequenceNumber(currentEntry, timeMs);
+      finalId = `${timeMs}-${seqNum}`;
     } else {
       // validation of ID
       if (entry && entry.value.length > 0) {
@@ -110,7 +113,8 @@ export class StreamCommands {
       id: finalId,
       fields: fieldMap,
     };
-    entry?.value.push(streamEntry);
+    const currentEntry = this.kvStore.get(key)!;
+    currentEntry.value.push(streamEntry);
 
     return encodeBulkString(finalId);
   }
