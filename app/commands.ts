@@ -105,10 +105,6 @@ export class RedisCommands {
     if (!entry) {
       return encodeSimpleString("none");
     }
-    if (Array.isArray(entry.value)) {
-      return encodeSimpleString("list");
-    }
-
     if (entry.type === "stream") {
       return encodeSimpleString("stream");
     }
