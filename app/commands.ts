@@ -8,6 +8,7 @@ import {
 import * as net from "net";
 import {StringCommands} from "./commands/string-commands";
 import {ListCommands} from "./commands/list-commands";
+import {StreamCommands} from "./commands/stream-commands";
 
 // Enhanced key-value store with expiry support
 export interface KeyValueEntry {
@@ -26,11 +27,13 @@ export class RedisCommands {
   private kvStore: Map<string, KeyValueEntry>;
   private stringCommands: StringCommands;
   private listCommands: ListCommands;
+  private streamCommands: StreamCommands;
 
   constructor() {
     this.kvStore = new Map<string, KeyValueEntry>();
     this.stringCommands = new StringCommands(this.kvStore);
     this.listCommands = new ListCommands(this.kvStore);
+    this.streamCommands = new StreamCommands(this.kvStore);
   }
 
   // ===== COMMAND HANDLERS =====
@@ -71,6 +74,9 @@ export class RedisCommands {
         return; // Don't write response for blocking commands
       case "TYPE":
         response = this.handleType(args);
+        break;
+      case "XADD":
+        response = this.streamCommands.handleXAdd(args);
         break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
