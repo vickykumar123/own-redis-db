@@ -8,6 +8,45 @@ export class StreamCommands {
     this.kvStore = kvStore;
   }
 
+  private idValidation(entry: KeyValueEntry, incomingId: string): string {
+    const lastEntry = entry.value[entry.value.length - 1];
+    const lastId = lastEntry.id;
+    const [lastMs, lastSeq] = lastId.split("-").map(Number);
+    const [newMs, newSeq] = incomingId.split("-").map(Number);
+    let errorMsg = "";
+    if (newMs === 0 && newSeq === 0) {
+      errorMsg = encodeError(
+        "ERR The ID specified in XADD must be greater than 0-0"
+      );
+    } else if (newMs === lastMs && newSeq <= lastSeq) {
+      errorMsg = encodeError(
+        "ERR The ID specified in XADD is equal or smaller than the target stream top item"
+      );
+    } else if (newMs < lastMs || isNaN(newMs) || isNaN(newSeq)) {
+      errorMsg = encodeError(
+        "ERR The ID specified in XADD is equal or smaller than the target stream top item"
+      );
+    }
+    return errorMsg;
+  }
+
+  private generateSequenceNumber(entry: KeyValueEntry, timeMs: number): number {
+    if (entry.value.length === 0) {
+      return timeMs === 0 ? 1 : 0; // Special case: when time=0, seq starts at 1
+    }
+
+    // Find highest sequence number for this time part
+    let maxSeq = -1;
+    for (const streamEntry of entry.value) {
+      const [entryMs, entrySeq] = streamEntry.id.split("-").map(Number);
+      if (entryMs === timeMs && entrySeq > maxSeq) {
+        maxSeq = entrySeq;
+      }
+    }
+
+    return maxSeq === -1 ? (timeMs === 0 ? 1 : 0) : maxSeq + 1;
+  }
+
   handleXAdd(args: string[]): string {
     if (args.length < 4 || args.length % 2 !== 0) {
       return encodeError("ERR wrong number of arguments for 'xadd' command");
@@ -21,24 +60,43 @@ export class StreamCommands {
       this.kvStore.set(key, {value: [], type: "stream"});
     }
 
-    // validation of ID
-    if (entry && entry.value.length > 0) {
-      const lastEntry = entry.value[entry.value.length - 1];
-      const lastId = lastEntry.id;
-      const [lastMs, lastSeq] = lastId.split("-").map(Number);
-      const [newMs, newSeq] = id.split("-").map(Number);
-      if (newMs === 0 && newSeq === 0) {
-        return encodeError(
-          "ERR The ID specified in XADD must be greater than 0-0"
-        );
-      } else if (newMs === lastMs && newSeq <= lastSeq) {
-        return encodeError(
-          "ERR The ID specified in XADD is equal or smaller than the target stream top item"
-        );
-      } else if (newMs < lastMs || isNaN(newMs) || isNaN(newSeq)) {
-        return encodeError(
-          "ERR The ID specified in XADD is equal or smaller than the target stream top item"
-        );
+    const [timeStr, seqStr] = id.split("-");
+    const isAutoSeq = seqStr === "*";
+    const finalId = id === "*" ? "0-0" : id;
+
+    if (isAutoSeq) {
+      const timeMs = parseInt(timeStr);
+      if (isNaN(timeMs)) {
+        return encodeError("ERR Invalid stream ID specified as argument");
+      }
+
+      // Validate time part against existing entries
+      if (entry && entry.value.length > 0) {
+        const lastEntry = entry.value[entry.value.length - 1];
+        const [lastMs] = lastEntry.id.split("-").map(Number);
+
+        if (timeMs < lastMs) {
+          return encodeError(
+            "ERR The ID specified in XADD is equal or smaller than the target stream top item"
+          );
+        }
+
+        // Special case: if timeMs === 0 and we have any entries, it's invalid
+        if (timeMs === 0) {
+          return encodeError(
+            "ERR The ID specified in XADD must be greater than 0-0"
+          );
+        }
+      }
+
+      // Generate sequence number
+      const seqNum = this.generateSequenceNumber(entry!, timeMs);
+      const finalId = `${timeMs}-${seqNum}`;
+    } else {
+      // validation of ID
+      if (entry && entry.value.length > 0) {
+        const error = this.idValidation(entry, id);
+        if (error) return error;
       }
     }
 
@@ -49,11 +107,11 @@ export class StreamCommands {
     }
 
     const streamEntry = {
-      id: id,
+      id: finalId,
       fields: fieldMap,
     };
     entry?.value.push(streamEntry);
 
-    return encodeBulkString(id);
+    return encodeBulkString(finalId);
   }
 }
