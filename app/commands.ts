@@ -109,7 +109,6 @@ export class RedisCommands {
 
     return encodeSimpleString("string");
   }
-  // ===== UTILITY METHODS =====
 
   // For testing or debugging
   getStoreSize(): number {
