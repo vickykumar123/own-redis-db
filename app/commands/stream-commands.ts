@@ -27,17 +27,17 @@ export class StreamCommands {
       const lastId = lastEntry.id;
       const [lastMs, lastSeq] = lastId.split("-").map(Number);
       const [newMs, newSeq] = id.split("-").map(Number);
-      if (newMs === lastMs && newSeq <= lastSeq) {
+      if (newMs === 0 && newSeq === 0) {
+        return encodeError(
+          "ERR The ID specified in XADD must be greater than 0-0"
+        );
+      } else if (newMs === lastMs && newSeq <= lastSeq) {
         return encodeError(
           "ERR The ID specified in XADD is equal or smaller than the target stream top item"
         );
       } else if (newMs < lastMs || isNaN(newMs) || isNaN(newSeq)) {
         return encodeError(
           "ERR The ID specified in XADD is equal or smaller than the target stream top item"
-        );
-      } else if (newMs === 0 && newSeq === 0) {
-        return encodeError(
-          "ERR The ID specified in XADD must be greater than 0-0"
         );
       }
     }
