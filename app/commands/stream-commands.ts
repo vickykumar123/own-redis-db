@@ -21,6 +21,27 @@ export class StreamCommands {
       this.kvStore.set(key, {value: [], type: "stream"});
     }
 
+    // validation of ID
+    if (entry && entry.value.length > 0) {
+      const lastEntry = entry.value[entry.value.length - 1];
+      const lastId = lastEntry.id;
+      const [lastMs, lastSeq] = lastId.split("-").map(Number);
+      const [newMs, newSeq] = id.split("-").map(Number);
+      if (newMs === lastMs && newSeq <= lastSeq) {
+        return encodeError(
+          "ERR The ID specified in XADD is equal or smaller than the target stream top item"
+        );
+      } else if (newMs < lastMs || isNaN(newMs) || isNaN(newSeq)) {
+        return encodeError(
+          "ERR The ID specified in XADD is equal or smaller than the target stream top item"
+        );
+      } else if (newMs === 0 && newSeq === 0) {
+        return encodeError(
+          "ERR The ID specified in XADD must be greater than 0-0"
+        );
+      }
+    }
+
     // create the entry
     const fieldMap = new Map<string, string>();
     for (let i = 0; i < fieldsValues.length; i += 2) {
