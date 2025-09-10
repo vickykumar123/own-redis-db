@@ -175,11 +175,8 @@ export class StreamCommands {
         fieldArray.push(encodeBulkString(field), encodeBulkString(value));
       }
 
-      const entryArray = [
-        encodeBulkString(streamEntry.id),
-        encodeArray(fieldArray),
-      ];
-      results.push(encodeArray(entryArray));
+      const entryResp = `*2\r\n${encodeBulkString(streamEntry.id)}${encodeArray(fieldArray)}`;
+      results.push(entryResp);
     }
     return encodeRawArray(results);
   }
