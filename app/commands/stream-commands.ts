@@ -147,11 +147,12 @@ export class StreamCommands {
     const [key, startId, endId] = args;
     const entry = this.kvStore.get(key);
     if (!entry || entry.type !== "stream") {
-      return encodeArray([]); // Key does not exist or is not a stream
+      return "*0\r\n"; // Empty array for non-existent stream
     }
     const [startMs, startSeq] = this.parseRangeId(startId, false);
     const [endMs, endSeq] = this.parseRangeId(endId, true);
-    const results = [];
+    
+    const matchingEntries = [];
 
     for (const streamEntry of entry.value) {
       const [entryMs, entrySeq] = streamEntry.id.split("-").map(Number);
@@ -170,15 +171,29 @@ export class StreamCommands {
       }
 
       // Format entry as [id, [field1, value1, field2, value2, ...]]
-      // Build field array as raw strings (not pre-encoded)
-      const fieldValues: string[] = [];
+      // Build field array as flat list of raw strings
+      const fieldArray: string[] = [];
       for (const [field, value] of streamEntry.fields) {
-        fieldValues.push(field, value);
+        fieldArray.push(field, value);
       }
 
-      const entryResp = `*2\r\n${encodeBulkString(streamEntry.id)}${encodeArray(fieldValues)}`;
-      results.push(entryResp);
+      matchingEntries.push([streamEntry.id, fieldArray]);
     }
-    return encodeRawArray(results);
+
+    // Build RESP response manually like the example
+    let response = `*${matchingEntries.length}\r\n`;
+    
+    for (const [id, fields] of matchingEntries) {
+      response += `*2\r\n`; // Entry array has 2 elements: [id, fields]
+      response += `$${id.length}\r\n${id}\r\n`; // ID as bulk string
+      response += `*${fields.length}\r\n`; // Field array header
+      
+      // Each field/value as bulk string
+      for (const field of fields) {
+        response += `$${field.length}\r\n${field}\r\n`;
+      }
+    }
+    
+    return response;
   }
 }
