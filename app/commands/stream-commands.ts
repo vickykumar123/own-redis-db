@@ -1,5 +1,5 @@
 import type {KeyValueEntry} from "../commands";
-import {encodeBulkString, encodeError} from "../parser";
+import {encodeArray, encodeBulkString, encodeError} from "../parser";
 
 export class StreamCommands {
   private kvStore: Map<string, KeyValueEntry>;
@@ -28,6 +28,25 @@ export class StreamCommands {
       );
     }
     return errorMsg;
+  }
+
+  private parseRangeId(id: string, isEnd: boolean): [number, number] {
+    if (id === "-") {
+      return [Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY];
+    }
+    if (id === "+") {
+      return [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY];
+    }
+    const parts = id.split("-");
+    let timeMs = parseInt(parts[0]);
+    if (parts.length === 1) {
+      //If no sequence number was provided (e.g., just "1526985054069"):
+      //- For start range: default sequence to 0 (get from beginning of that time)
+      // - For end range: default sequence to MAX_SAFE_INTEGER (get until end of that time)
+      return [timeMs, isEnd ? Number.MAX_SAFE_INTEGER : 0];
+    }
+
+    return [timeMs, parseInt(parts[1])];
   }
 
   private generateSequenceNumber(entry: KeyValueEntry, timeMs: number): number {
@@ -114,5 +133,49 @@ export class StreamCommands {
     streamEntry.value.push(newEntry);
 
     return encodeBulkString(finalId);
+  }
+
+  handleXRange(args: string[]): string {
+    if (args.length !== 3) {
+      return encodeError("ERR wrong number of arguments for 'xrange' command");
+    }
+    const [key, startId, endId] = args;
+    const entry = this.kvStore.get(key);
+    if (!entry || entry.type !== "stream") {
+      return encodeArray([]); // Key does not exist or is not a stream
+    }
+    const [startMs, startSeq] = this.parseRangeId(startId, false);
+    const [endMs, endSeq] = this.parseRangeId(endId, true);
+    const results = [];
+
+    for (const streamEntry of entry.value) {
+      const [entryMs, entrySeq] = streamEntry.id.split("-").map(Number);
+      if (entryMs < startMs || (entryMs === startMs && entrySeq < startSeq)) {
+        continue; // Before start range
+        // - Skip entries that are before the start range:
+        // - Either time is less than start time
+        // - OR time equals start time BUT sequence is less than start sequence
+      }
+
+      if (entryMs > endMs || (entryMs === endMs && entrySeq > endSeq)) {
+        break; // After end range, can stop processing
+        // - Stop processing if entry is after end range:
+        // - Either time is greater than end time
+        // - OR time equals end time BUT sequence is greater than end sequence
+      }
+
+      // Format entry as [id, [field1, value1, field2, value2, ...]]
+      const fieldArray: string[] = [];
+      for (const [field, value] of streamEntry.fields) {
+        fieldArray.push(encodeBulkString(field), encodeBulkString(value));
+      }
+
+      const entryArray = [
+        encodeBulkString(streamEntry.id),
+        encodeArray(fieldArray),
+      ];
+      results.push(encodeArray(entryArray));
+    }
+    return encodeArray(results);
   }
 }
