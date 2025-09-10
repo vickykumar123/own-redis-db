@@ -174,3 +174,25 @@ export function encodeRawArray(elements: string[]): string {
   }
   return response;
 }
+export function encodeNestedArray(items: (string | string[])[][]): string {
+  let response = `*${items.length}\r\n`;
+
+  for (const item of items) {
+    response += `*${item.length}\r\n`; // Each item is an array
+
+    for (const element of item) {
+      if (Array.isArray(element)) {
+        // Handle nested array (like field array)
+        response += `*${element.length}\r\n`;
+        for (const subElement of element) {
+          response += encodeBulkString(subElement);
+        }
+      } else {
+        // Handle string (like ID)
+        response += encodeBulkString(element);
+      }
+    }
+  }
+
+  return response;
+}

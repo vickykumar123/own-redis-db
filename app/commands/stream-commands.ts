@@ -3,6 +3,7 @@ import {
   encodeArray,
   encodeBulkString,
   encodeError,
+  encodeNestedArray,
   encodeRawArray,
 } from "../parser";
 
@@ -170,17 +171,15 @@ export class StreamCommands {
       }
 
       // Format entry as [id, [field1, value1, field2, value2, ...]]
+      // Build field array as raw strings (not encoded)
       const fieldArray: string[] = [];
       for (const [field, value] of streamEntry.fields) {
-        fieldArray.push(encodeBulkString(field), encodeBulkString(value));
+        fieldArray.push(field, value);
       }
 
-      const entryArray = [
-        encodeBulkString(streamEntry.id),
-        encodeArray(fieldArray),
-      ];
-      results.push(encodeArray(entryArray));
+      // Push raw values, not encoded strings
+      results.push([streamEntry.id, fieldArray]);
     }
-    return encodeRawArray(results);
+    return encodeNestedArray(results);
   }
 }
