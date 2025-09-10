@@ -196,3 +196,27 @@ export function encodeNestedArray(items: (string | string[])[][]): string {
 
   return response;
 }
+
+export function encodeXReadResponse(
+  streams: [string, [string, string[]][]][]
+): string {
+  let response = `*${streams.length}\r\n`;
+
+  for (const [streamKey, entries] of streams) {
+    response += `*2\r\n`; // Each stream has [key, entries]
+    response += encodeBulkString(streamKey); // Stream key
+    response += `*${entries.length}\r\n`; // Entries array
+
+    for (const [entryId, fields] of entries) {
+      response += `*2\r\n`; // Each entry has [id, fields]
+      response += encodeBulkString(entryId); // Entry ID
+      response += `*${fields.length}\r\n`; // Fields array
+
+      for (const field of fields) {
+        response += encodeBulkString(field); // Each field/value
+      }
+    }
+  }
+
+  return response;
+}

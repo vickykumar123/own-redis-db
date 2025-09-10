@@ -1,10 +1,4 @@
-import {
-  encodeBulkString,
-  encodeSimpleString,
-  encodeError,
-  encodeInteger,
-  encodeArray,
-} from "./parser";
+import {encodeBulkString, encodeSimpleString, encodeError} from "./parser";
 import * as net from "net";
 import {StringCommands} from "./commands/string-commands";
 import {ListCommands} from "./commands/list-commands";
@@ -80,6 +74,9 @@ export class RedisCommands {
         break;
       case "XRANGE":
         response = this.streamCommands.handleXRange(args);
+        break;
+      case "XREAD":
+        response = this.streamCommands.handleXRead(args);
         break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);

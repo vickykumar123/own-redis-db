@@ -5,6 +5,7 @@ import {
   encodeError,
   encodeNestedArray,
   encodeRawArray,
+  encodeXReadResponse,
 } from "../parser";
 
 export class StreamCommands {
@@ -181,5 +182,43 @@ export class StreamCommands {
       results.push([streamEntry.id, fieldArray]);
     }
     return encodeNestedArray(results);
+  }
+
+  handleXRead(args: string[]): string {
+    if (args.length < 4 || args.length % 2 !== 0) {
+      return encodeError("ERR wrong number of arguments for 'xread' command");
+    }
+    if (args[0].toUpperCase() !== "STREAMS") {
+      return encodeError("ERR syntax error");
+    }
+    const key = args[1];
+    const id = args[2];
+    const entry = this.kvStore.get(key);
+    if (!entry || entry.type !== "stream") {
+      return encodeArray([]); // Key does not exist or is not a stream
+    }
+    const [startMs, startSeq] = this.parseRangeId(id, false);
+    const results: [string, string[]][] = [];
+
+    for (const streamEntry of entry.value) {
+      const [entryMs, entrySeq] = streamEntry.id.split("-").map(Number);
+      // Exculsive range
+      if (entryMs < startMs || (entryMs === startMs && entrySeq <= startSeq)) {
+        continue; // Before start range
+        // - Skip entries that are before the start range:
+        // - Either time is less than start time
+        // - OR time equals start time BUT sequence is less than start sequence
+      }
+      // No end range in XREAD, so we process all entries from startId onwards
+      // Format entry as [id, [field1, value1, field2, value2, ...]]
+      // Build field array as raw strings (not encoded)
+      const fieldArray: string[] = [];
+      for (const [field, value] of streamEntry.fields) {
+        fieldArray.push(field, value);
+      }
+      // Push raw values, not encoded strings
+      results.push([streamEntry.id, fieldArray]);
+    }
+    return encodeXReadResponse([[key, results]]);
   }
 }
