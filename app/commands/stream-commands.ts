@@ -170,12 +170,13 @@ export class StreamCommands {
       }
 
       // Format entry as [id, [field1, value1, field2, value2, ...]]
-      const fieldArray: string[] = [];
+      // Build field array as raw strings (not pre-encoded)
+      const fieldValues: string[] = [];
       for (const [field, value] of streamEntry.fields) {
-        fieldArray.push(encodeBulkString(field), encodeBulkString(value));
+        fieldValues.push(field, value);
       }
 
-      const entryResp = `*2\r\n${encodeBulkString(streamEntry.id)}${encodeRawArray(fieldArray)}`;
+      const entryResp = `*2\r\n${encodeBulkString(streamEntry.id)}${encodeArray(fieldValues)}`;
       results.push(entryResp);
     }
     return encodeRawArray(results);
