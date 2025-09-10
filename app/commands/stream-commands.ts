@@ -1,5 +1,10 @@
 import type {KeyValueEntry} from "../commands";
-import {encodeArray, encodeBulkString, encodeError} from "../parser";
+import {
+  encodeArray,
+  encodeBulkString,
+  encodeError,
+  encodeRawArray,
+} from "../parser";
 
 export class StreamCommands {
   private kvStore: Map<string, KeyValueEntry>;
@@ -176,6 +181,6 @@ export class StreamCommands {
       ];
       results.push(encodeArray(entryArray));
     }
-    return encodeArray(results);
+    return encodeRawArray(results);
   }
 }

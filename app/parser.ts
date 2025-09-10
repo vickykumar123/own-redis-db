@@ -167,3 +167,10 @@ export function encodeArray(elements: (string | null)[] | null): string {
 
   return response;
 }
+export function encodeRawArray(elements: string[]): string {
+  let response = `*${elements.length}\r\n`;
+  for (const element of elements) {
+    response += element; // Elements are already RESP-encoded
+  }
+  return response;
+}
