@@ -185,7 +185,7 @@ export class StreamCommands {
   }
 
   handleXRead(args: string[]): string {
-    if (args.length < 4 || args.length % 2 !== 0) {
+    if (args.length < 3 || args.length % 2 === 0) {
       return encodeError("ERR wrong number of arguments for 'xread' command");
     }
     if (args[0].toUpperCase() !== "STREAMS") {
