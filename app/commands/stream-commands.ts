@@ -191,34 +191,52 @@ export class StreamCommands {
     if (args[0].toUpperCase() !== "STREAMS") {
       return encodeError("ERR syntax error");
     }
-    const key = args[1];
-    const id = args[2];
-    const entry = this.kvStore.get(key);
-    if (!entry || entry.type !== "stream") {
-      return encodeArray([]); // Key does not exist or is not a stream
-    }
-    const [startMs, startSeq] = this.parseRangeId(id, false);
-    const results: [string, string[]][] = [];
 
-    for (const streamEntry of entry.value) {
-      const [entryMs, entrySeq] = streamEntry.id.split("-").map(Number);
-      // Exculsive range
-      if (entryMs < startMs || (entryMs === startMs && entrySeq <= startSeq)) {
-        continue; // Before start range
-        // - Skip entries that are before the start range:
-        // - Either time is less than start time
-        // - OR time equals start time BUT sequence is less than start sequence
+    // Calculate number of streams: (total_args - 1) / 2
+    const numStreams = (args.length - 1) / 2;
+
+    // Extract stream keys and IDs
+    const streamKeys = args.slice(1, 1 + numStreams); // [stream_key, other_stream_key]
+    const streamIds = args.slice(1 + numStreams); // [0-0, 0-1]
+
+    const allResults: [string, [string, string[]][]][] = [];
+
+    // Process each stream
+    for (let i = 0; i < numStreams; i++) {
+      const key = streamKeys[i];
+      const startId = streamIds[i];
+
+      const entry = this.kvStore.get(key);
+      if (!entry || entry.type !== "stream") {
+        continue; // Skip non-existent streams
       }
-      // No end range in XREAD, so we process all entries from startId onwards
-      // Format entry as [id, [field1, value1, field2, value2, ...]]
-      // Build field array as raw strings (not encoded)
-      const fieldArray: string[] = [];
-      for (const [field, value] of streamEntry.fields) {
-        fieldArray.push(field, value);
+
+      const [startMs, startSeq] = this.parseRangeId(startId, false);
+      const results: [string, string[]][] = [];
+
+      // Process entries for this stream (your existing logic)
+      for (const streamEntry of entry.value) {
+        const [entryMs, entrySeq] = streamEntry.id.split("-").map(Number);
+        if (
+          entryMs < startMs ||
+          (entryMs === startMs && entrySeq <= startSeq)
+        ) {
+          continue;
+        }
+
+        const fieldArray: string[] = [];
+        for (const [field, value] of streamEntry.fields) {
+          fieldArray.push(field, value);
+        }
+        results.push([streamEntry.id, fieldArray]);
       }
-      // Push raw values, not encoded strings
-      results.push([streamEntry.id, fieldArray]);
+
+      // Only include streams that have results
+      if (results.length > 0) {
+        allResults.push([key, results]);
+      }
     }
-    return encodeXReadResponse([[key, results]]);
+
+    return encodeXReadResponse(allResults);
   }
 }
