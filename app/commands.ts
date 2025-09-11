@@ -3,7 +3,6 @@ import * as net from "net";
 import {StringCommands} from "./commands/string-commands";
 import {ListCommands} from "./commands/list-commands";
 import {StreamCommands} from "./commands/stream-commands";
-import {TransactionCommands} from "./commands/transaction-commands";
 
 // Enhanced key-value store with expiry support
 export interface KeyValueEntry {
@@ -29,7 +28,6 @@ export class RedisCommands {
   private stringCommands: StringCommands;
   private listCommands: ListCommands;
   private streamCommands: StreamCommands;
-  private transactionCommands: TransactionCommands;
   private transactionState: Map<string, boolean> = new Map(); // Per-connection transaction state
   private commandQueues: Map<string, QueuedCommand[]> = new Map(); // Per-connection command queues
   private executingTransaction = false; // Flag to bypass transaction logic during EXEC
@@ -39,15 +37,10 @@ export class RedisCommands {
     this.stringCommands = new StringCommands(this.kvStore);
     this.listCommands = new ListCommands(this.kvStore);
     this.streamCommands = new StreamCommands(this.kvStore);
-    this.transactionCommands = new TransactionCommands(
-      this.kvStore,
-      this.transactionState,
-      this.commandQueues
-    );
   }
 
   // ===== HELPER METHODS =====
-  
+
   private getConnectionId(socket: net.Socket): string {
     return `${socket.remoteAddress}:${socket.remotePort}`;
   }
@@ -58,11 +51,11 @@ export class RedisCommands {
     command: string,
     args: string[],
     socket: net.Socket
-  ): Promise<void> {
+  ): Promise<any> {
     let response: string;
 
     if (this.shouldQueue(command, socket)) {
-      response = this.transactionCommands.queueCommand(command, args, socket);
+      response = this.queueCommand(command, args, socket);
       socket.write(response);
       return;
     }
@@ -117,13 +110,13 @@ export class RedisCommands {
         response = await this.streamCommands.handleXRead(args);
         break;
       case "MULTI":
-        response = this.transactionCommands.handleMulti(args, socket);
+        response = this.handleMulti(args, socket);
         break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
     }
 
-    socket.write(response);
+    return response;
   }
 
   private handlePing(args: string[]): string {
@@ -157,12 +150,47 @@ export class RedisCommands {
     const controlCommands = ["MULTI", "EXEC", "DISCARD"];
     return (
       !this.executingTransaction &&
-      this.transactionCommands.isInTransaction(socket) &&
+      this.isInTransaction(socket) &&
       !controlCommands.includes(command.toUpperCase())
     );
   }
 
-  private async handleExec(args: string[], socket: net.Socket): Promise<string> {
+  private handleMulti(args: string[], socket: net.Socket): string {
+    if (args.length !== 0) {
+      return encodeError("ERR wrong number of arguments for 'multi' command");
+    }
+
+    const connectionId = this.getConnectionId(socket);
+    this.transactionState.set(connectionId, true);
+    this.commandQueues.set(connectionId, []);
+
+    return encodeSimpleString("OK");
+  }
+
+  private isInTransaction(socket: net.Socket): boolean {
+    const connectionId = this.getConnectionId(socket);
+    return this.transactionState.get(connectionId) || false;
+  }
+
+  private queueCommand(command: string, args: string[], socket: net.Socket): string {
+    const connectionId = this.getConnectionId(socket);
+    const isInTransaction = this.transactionState.get(connectionId) || false;
+
+    if (!isInTransaction) {
+      return encodeError("ERR command not in transaction");
+    }
+
+    const queue = this.commandQueues.get(connectionId) || [];
+    queue.push({command, args});
+    this.commandQueues.set(connectionId, queue);
+
+    return encodeSimpleString("QUEUED");
+  }
+
+  private async handleExec(
+    args: string[],
+    socket: net.Socket
+  ): Promise<string> {
     if (args.length !== 0) {
       return encodeError("ERR wrong number of arguments for 'exec' command");
     }
@@ -184,18 +212,10 @@ export class RedisCommands {
 
     // Execute each queued command using existing executeCommand logic
     const results: string[] = [];
-    for (const { command, args } of queuedCommands) {
-      // Create a mock socket write function to capture responses
-      let capturedResponse = "";
-      const mockSocket = {
-        ...socket,
-        write: (data: string) => {
-          capturedResponse = data;
-        }
-      } as any;
-
-      await this.executeCommand(command, args, mockSocket);
-      results.push(capturedResponse);
+    // No more mock socket - just call executeCommand and collect responses
+    for (const {command, args} of queuedCommands) {
+      const result = await this.executeCommand(command, args, socket);
+      results.push(result);
     }
 
     // Reset flag
