@@ -215,13 +215,30 @@ export class StreamCommands {
     const streamKeys = remainingArgs.slice(1, 1 + numStreams);
     const streamIds = remainingArgs.slice(1 + numStreams);
 
+    // Handle $ symbol - replace with latest ID for each stream
+    const processedStreamIds = streamIds.map((id, index) => {
+      if (id === "$") {
+        const streamKey = streamKeys[index];
+        const entry = this.kvStore.get(streamKey);
+        if (entry && entry.type === "stream" && entry.value.length > 0) {
+          // Get the latest ID from this stream
+          const lastEntry = entry.value[entry.value.length - 1];
+          return lastEntry.id;
+        } else {
+          // No entries in stream, use 0-0 as base
+          return "0-0";
+        }
+      }
+      return id;
+    });
+
     // If blocking, implement the blocking logic
     if (blockTimeout !== null) {
-      return this.handleBlockingXRead(streamKeys, streamIds, blockTimeout);
+      return this.handleBlockingXRead(streamKeys, processedStreamIds, blockTimeout);
     }
 
     // Non-blocking logic
-    return this.processXRead(streamKeys, streamIds);
+    return this.processXRead(streamKeys, processedStreamIds);
   }
 
   private async handleBlockingXRead(
