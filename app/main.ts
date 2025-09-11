@@ -10,7 +10,7 @@ const redisCommands = new RedisCommands();
 
 const server: net.Server = net.createServer((socket: net.Socket) => {
   // Handle connection
-  socket.on("data", (data: Buffer) => {
+  socket.on("data", async (data: Buffer) => {
     try {
       const parsedCommand = parseRESPCommand(data);
 
@@ -20,7 +20,7 @@ const server: net.Server = net.createServer((socket: net.Socket) => {
       }
 
       const {command, args} = parsedCommand;
-      redisCommands.executeCommand(command, args, socket);
+      await redisCommands.executeCommand(command, args, socket);
     } catch (error) {
       console.error("Error processing command:", error);
       socket.write(encodeError("ERR Internal server error"));

@@ -184,25 +184,74 @@ export class StreamCommands {
     return encodeNestedArray(results);
   }
 
-  handleXRead(args: string[]): string {
-    if (args.length < 3 || args.length % 2 === 0) {
+  async handleXRead(args: string[]): Promise<string> {
+    let blockTimeout: number | null = null;
+    let argsOffset = 0;
+
+    // Check for BLOCK argument
+    if (args[0].toUpperCase() === "BLOCK") {
+      if (args.length < 2) {
+        return encodeError("ERR wrong number of arguments for 'xread' command");
+      }
+      blockTimeout = parseInt(args[1]);
+      if (isNaN(blockTimeout)) {
+        return encodeError("ERR value is not an integer or out of range");
+      }
+      argsOffset = 2; // Skip "block" and timeout value
+    }
+
+    // Validate remaining arguments
+    const remainingArgs = args.slice(argsOffset);
+    if (remainingArgs.length < 3 || remainingArgs.length % 2 === 0) {
       return encodeError("ERR wrong number of arguments for 'xread' command");
     }
-    if (args[0].toUpperCase() !== "STREAMS") {
+    
+    if (remainingArgs[0].toUpperCase() !== "STREAMS") {
       return encodeError("ERR syntax error");
     }
 
-    // Calculate number of streams: (total_args - 1) / 2
-    const numStreams = (args.length - 1) / 2;
+    // Process streams
+    const numStreams = (remainingArgs.length - 1) / 2;
+    const streamKeys = remainingArgs.slice(1, 1 + numStreams);
+    const streamIds = remainingArgs.slice(1 + numStreams);
 
-    // Extract stream keys and IDs
-    const streamKeys = args.slice(1, 1 + numStreams); // [stream_key, other_stream_key]
-    const streamIds = args.slice(1 + numStreams); // [0-0, 0-1]
+    // If blocking, implement the blocking logic
+    if (blockTimeout !== null) {
+      return this.handleBlockingXRead(streamKeys, streamIds, blockTimeout);
+    }
 
+    // Non-blocking logic
+    return this.processXRead(streamKeys, streamIds);
+  }
+
+  private async handleBlockingXRead(streamKeys: string[], streamIds: string[], timeout: number): Promise<string> {
+    const startTime = Date.now();
+    
+    // Keep checking until timeout or new entries found
+    while (true) {
+      const results = this.processXRead(streamKeys, streamIds);
+      
+      // If we found results, return them
+      if (results !== "*0\r\n") { // Not empty
+        return results;
+      }
+      
+      // Check if we've exceeded timeout
+      const elapsed = Date.now() - startTime;
+      if (elapsed >= timeout) {
+        return "*-1\r\n"; // Null array - timeout with no results
+      }
+      
+      // Wait 10ms before checking again (avoid busy waiting)
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
+
+  private processXRead(streamKeys: string[], streamIds: string[]): string {
     const allResults: [string, [string, string[]][]][] = [];
 
     // Process each stream
-    for (let i = 0; i < numStreams; i++) {
+    for (let i = 0; i < streamKeys.length; i++) {
       const key = streamKeys[i];
       const startId = streamIds[i];
 
@@ -214,7 +263,7 @@ export class StreamCommands {
       const [startMs, startSeq] = this.parseRangeId(startId, false);
       const results: [string, string[]][] = [];
 
-      // Process entries for this stream (your existing logic)
+      // Process entries for this stream
       for (const streamEntry of entry.value) {
         const [entryMs, entrySeq] = streamEntry.id.split("-").map(Number);
         if (
@@ -235,6 +284,10 @@ export class StreamCommands {
       if (results.length > 0) {
         allResults.push([key, results]);
       }
+    }
+
+    if (allResults.length === 0) {
+      return "*0\r\n"; // Empty array
     }
 
     return encodeXReadResponse(allResults);
