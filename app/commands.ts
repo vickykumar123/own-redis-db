@@ -58,7 +58,9 @@ export class RedisCommands {
       case "INCR":
         response = this.stringCommands.handleIncr(args);
         break;
-
+      case "EXEC":
+        response = this.transactionCommands.handleExec(args);
+        break;
       case "RPUSH":
         response = this.listCommands.handleRPush(args);
         break;
