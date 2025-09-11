@@ -205,7 +205,7 @@ export class StreamCommands {
     if (remainingArgs.length < 3 || remainingArgs.length % 2 === 0) {
       return encodeError("ERR wrong number of arguments for 'xread' command");
     }
-    
+
     if (remainingArgs[0].toUpperCase() !== "STREAMS") {
       return encodeError("ERR syntax error");
     }
@@ -224,26 +224,31 @@ export class StreamCommands {
     return this.processXRead(streamKeys, streamIds);
   }
 
-  private async handleBlockingXRead(streamKeys: string[], streamIds: string[], timeout: number): Promise<string> {
+  private async handleBlockingXRead(
+    streamKeys: string[],
+    streamIds: string[],
+    timeout: number
+  ): Promise<string> {
     const startTime = Date.now();
-    
+
     // Keep checking until timeout or new entries found
     while (true) {
       const results = this.processXRead(streamKeys, streamIds);
-      
+
       // If we found results, return them
-      if (results !== "*0\r\n") { // Not empty
+      if (results !== "*0\r\n") {
+        // Not empty
         return results;
       }
-      
+
       // Check if we've exceeded timeout
       const elapsed = Date.now() - startTime;
-      if (elapsed >= timeout) {
+      if (timeout > 0 && elapsed >= timeout) {
         return "*-1\r\n"; // Null array - timeout with no results
       }
-      
+
       // Wait 10ms before checking again (avoid busy waiting)
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 10));
     }
   }
 
