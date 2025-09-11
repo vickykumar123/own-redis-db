@@ -3,6 +3,7 @@ import * as net from "net";
 import {StringCommands} from "./commands/string-commands";
 import {ListCommands} from "./commands/list-commands";
 import {StreamCommands} from "./commands/stream-commands";
+import {TransactionCommands} from "./commands/transaction-commands";
 
 // Enhanced key-value store with expiry support
 export interface KeyValueEntry {
@@ -22,12 +23,14 @@ export class RedisCommands {
   private stringCommands: StringCommands;
   private listCommands: ListCommands;
   private streamCommands: StreamCommands;
+  private transactionCommands: TransactionCommands;
 
   constructor() {
     this.kvStore = new Map<string, KeyValueEntry>();
     this.stringCommands = new StringCommands(this.kvStore);
     this.listCommands = new ListCommands(this.kvStore);
     this.streamCommands = new StreamCommands(this.kvStore);
+    this.transactionCommands = new TransactionCommands(this.kvStore);
   }
 
   // ===== COMMAND HANDLERS =====
@@ -85,6 +88,9 @@ export class RedisCommands {
         break;
       case "XREAD":
         response = await this.streamCommands.handleXRead(args);
+        break;
+      case "MULTI":
+        response = this.transactionCommands.handleMulti(args);
         break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
