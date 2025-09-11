@@ -110,6 +110,9 @@ export class RedisCommands {
       case "MULTI":
         response = this.handleMulti(args, socket);
         break;
+      case "DISCARD":
+        response = this.handleDiscard(args, socket);
+        break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
     }
@@ -204,6 +207,20 @@ export class RedisCommands {
       response += result;
     }
     return response;
+  }
+
+  private handleDiscard(args: string[], socket: net.Socket): string {
+    if (args.length !== 0) {
+      return encodeError("ERR wrong number of arguments for 'discard' command");
+    }
+    const connectionId = this.getConnectionId(socket);
+    const isInTransaction = this.transactionState.get(connectionId) || false;
+    if (!isInTransaction) {
+      return encodeError("ERR DISCARD without MULTI");
+    }
+    this.transactionState.set(connectionId, false);
+    this.commandQueues.set(connectionId, []);
+    return encodeSimpleString("OK");
   }
 
   // ========== TRANSACTION HELPERS ==========
