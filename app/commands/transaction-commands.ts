@@ -4,11 +4,17 @@ import * as net from "net";
 
 export class TransactionCommands {
   private kvStore: Map<string, KeyValueEntry>;
-  private transactionState: Map<string, boolean> = new Map(); // Per-connection transaction state
-  private commandQueues: Map<string, QueuedCommand[]> = new Map(); // Per-connection command queues
+  private transactionState: Map<string, boolean>; // Reference to RedisCommands transaction state
+  private commandQueues: Map<string, QueuedCommand[]>; // Reference to RedisCommands command queues
 
-  constructor(kvStore: Map<string, KeyValueEntry>) {
+  constructor(
+    kvStore: Map<string, KeyValueEntry>,
+    transactionState: Map<string, boolean>,
+    commandQueues: Map<string, QueuedCommand[]>
+  ) {
     this.kvStore = kvStore;
+    this.transactionState = transactionState;
+    this.commandQueues = commandQueues;
   }
 
   private getConnectionId(socket: net.Socket): string {

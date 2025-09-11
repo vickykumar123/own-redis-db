@@ -30,13 +30,26 @@ export class RedisCommands {
   private listCommands: ListCommands;
   private streamCommands: StreamCommands;
   private transactionCommands: TransactionCommands;
+  private transactionState: Map<string, boolean> = new Map(); // Per-connection transaction state
+  private commandQueues: Map<string, QueuedCommand[]> = new Map(); // Per-connection command queues
+  private executingTransaction = false; // Flag to bypass transaction logic during EXEC
 
   constructor() {
     this.kvStore = new Map<string, KeyValueEntry>();
     this.stringCommands = new StringCommands(this.kvStore);
     this.listCommands = new ListCommands(this.kvStore);
     this.streamCommands = new StreamCommands(this.kvStore);
-    this.transactionCommands = new TransactionCommands(this.kvStore);
+    this.transactionCommands = new TransactionCommands(
+      this.kvStore,
+      this.transactionState,
+      this.commandQueues
+    );
+  }
+
+  // ===== HELPER METHODS =====
+  
+  private getConnectionId(socket: net.Socket): string {
+    return `${socket.remoteAddress}:${socket.remotePort}`;
   }
 
   // ===== COMMAND HANDLERS =====
@@ -71,7 +84,7 @@ export class RedisCommands {
         response = this.stringCommands.handleIncr(args);
         break;
       case "EXEC":
-        response = this.transactionCommands.handleExec(args, socket);
+        response = await this.handleExec(args, socket);
         break;
       case "RPUSH":
         response = this.listCommands.handleRPush(args);
@@ -143,9 +156,65 @@ export class RedisCommands {
   private shouldQueue(command: string, socket: net.Socket): boolean {
     const controlCommands = ["MULTI", "EXEC", "DISCARD"];
     return (
+      !this.executingTransaction &&
       this.transactionCommands.isInTransaction(socket) &&
       !controlCommands.includes(command.toUpperCase())
     );
+  }
+
+  private async handleExec(args: string[], socket: net.Socket): Promise<string> {
+    if (args.length !== 0) {
+      return encodeError("ERR wrong number of arguments for 'exec' command");
+    }
+
+    const connectionId = this.getConnectionId(socket);
+    const isInTransaction = this.transactionState.get(connectionId) || false;
+
+    if (!isInTransaction) {
+      return encodeError("ERR EXEC without MULTI");
+    }
+
+    // Get queued commands and clear transaction state
+    const queuedCommands = this.commandQueues.get(connectionId) || [];
+    this.transactionState.set(connectionId, false);
+    this.commandQueues.set(connectionId, []);
+
+    // Set flag to bypass transaction logic
+    this.executingTransaction = true;
+
+    // Execute each queued command using existing executeCommand logic
+    const results: string[] = [];
+    for (const { command, args } of queuedCommands) {
+      // Create a mock socket write function to capture responses
+      let capturedResponse = "";
+      const mockSocket = {
+        ...socket,
+        write: (data: string) => {
+          capturedResponse = data;
+        }
+      } as any;
+
+      await this.executeCommand(command, args, mockSocket);
+      results.push(capturedResponse);
+    }
+
+    // Reset flag
+    this.executingTransaction = false;
+
+    // Return array of results
+    return this.encodeResultArray(results);
+  }
+
+  private encodeResultArray(results: string[]): string {
+    if (results.length === 0) {
+      return "*0\r\n"; // Empty array
+    }
+
+    let response = `*${results.length}\r\n`;
+    for (const result of results) {
+      response += result;
+    }
+    return response;
   }
 
   // For testing or debugging
