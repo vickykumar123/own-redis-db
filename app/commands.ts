@@ -48,8 +48,8 @@ export class RedisCommands {
   ): Promise<void> {
     let response: string;
 
-    if (this.shouldQueue(command)) {
-      response = this.transactionCommands.queueCommand(command, args);
+    if (this.shouldQueue(command, socket)) {
+      response = this.transactionCommands.queueCommand(command, args, socket);
       socket.write(response);
       return;
     }
@@ -71,7 +71,7 @@ export class RedisCommands {
         response = this.stringCommands.handleIncr(args);
         break;
       case "EXEC":
-        response = this.transactionCommands.handleExec(args);
+        response = this.transactionCommands.handleExec(args, socket);
         break;
       case "RPUSH":
         response = this.listCommands.handleRPush(args);
@@ -104,7 +104,7 @@ export class RedisCommands {
         response = await this.streamCommands.handleXRead(args);
         break;
       case "MULTI":
-        response = this.transactionCommands.handleMulti(args);
+        response = this.transactionCommands.handleMulti(args, socket);
         break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
@@ -140,10 +140,10 @@ export class RedisCommands {
     return encodeSimpleString("string");
   }
 
-  private shouldQueue(command: string): boolean {
+  private shouldQueue(command: string, socket: net.Socket): boolean {
     const controlCommands = ["MULTI", "EXEC", "DISCARD"];
     return (
-      this.transactionCommands.isInTransaction() &&
+      this.transactionCommands.isInTransaction(socket) &&
       !controlCommands.includes(command.toUpperCase())
     );
   }
