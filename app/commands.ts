@@ -144,15 +144,6 @@ export class RedisCommands {
     return encodeSimpleString("string");
   }
 
-  private shouldQueue(command: string, socket: net.Socket): boolean {
-    const controlCommands = ["MULTI", "EXEC", "DISCARD"];
-    return (
-      !this.executingTransaction &&
-      this.isInTransaction(socket) &&
-      !controlCommands.includes(command.toUpperCase())
-    );
-  }
-
   private handleMulti(args: string[], socket: net.Socket): string {
     if (args.length !== 0) {
       return encodeError("ERR wrong number of arguments for 'multi' command");
@@ -213,6 +204,16 @@ export class RedisCommands {
       response += result;
     }
     return response;
+  }
+
+  // ========== TRANSACTION HELPERS ==========
+  private shouldQueue(command: string, socket: net.Socket): boolean {
+    const controlCommands = ["MULTI", "EXEC", "DISCARD"];
+    return (
+      !this.executingTransaction &&
+      this.isInTransaction(socket) &&
+      !controlCommands.includes(command.toUpperCase())
+    );
   }
 
   private isInTransaction(socket: net.Socket): boolean {

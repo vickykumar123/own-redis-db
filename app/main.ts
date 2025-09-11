@@ -25,7 +25,9 @@ const server: net.Server = net.createServer((socket: net.Socket) => {
         args,
         socket
       );
-      socket.write(response);
+      if (response !== undefined) {
+        socket.write(response);
+      }
     } catch (error) {
       console.error("Error processing command:", error);
       socket.write(encodeError("ERR Internal server error"));
