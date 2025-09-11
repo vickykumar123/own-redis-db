@@ -32,7 +32,11 @@ export class RedisCommands {
 
   // ===== COMMAND HANDLERS =====
 
-  async executeCommand(command: string, args: string[], socket: net.Socket): Promise<void> {
+  async executeCommand(
+    command: string,
+    args: string[],
+    socket: net.Socket
+  ): Promise<void> {
     let response: string;
 
     switch (command.toUpperCase()) {
@@ -48,6 +52,10 @@ export class RedisCommands {
       case "GET":
         response = this.stringCommands.handleGet(args);
         break;
+      case "INCR":
+        response = this.stringCommands.handleIncr(args);
+        break;
+
       case "RPUSH":
         response = this.listCommands.handleRPush(args);
         break;
