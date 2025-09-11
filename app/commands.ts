@@ -18,6 +18,12 @@ export interface StreamEntry {
   fields: Map<string, string>; // Field-value pairs
 }
 
+// Queue entry for transactions
+export interface QueuedCommand {
+  command: string;
+  args: string[];
+}
+
 export class RedisCommands {
   private kvStore: Map<string, KeyValueEntry>;
   private stringCommands: StringCommands;
@@ -41,6 +47,12 @@ export class RedisCommands {
     socket: net.Socket
   ): Promise<void> {
     let response: string;
+
+    if (this.shouldQueue(command)) {
+      response = this.transactionCommands.queueCommand(command, args);
+      socket.write(response);
+      return;
+    }
 
     switch (command.toUpperCase()) {
       case "PING":
@@ -126,6 +138,14 @@ export class RedisCommands {
     }
 
     return encodeSimpleString("string");
+  }
+
+  private shouldQueue(command: string): boolean {
+    const controlCommands = ["MULTI", "EXEC", "DISCARD"];
+    return (
+      this.transactionCommands.isInTransaction() &&
+      !controlCommands.includes(command.toUpperCase())
+    );
   }
 
   // For testing or debugging
