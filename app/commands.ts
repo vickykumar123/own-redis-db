@@ -55,9 +55,7 @@ export class RedisCommands {
     let response: string;
 
     if (this.shouldQueue(command, socket)) {
-      response = this.queueCommand(command, args, socket);
-      socket.write(response);
-      return;
+      return this.queueCommand(command, args, socket);
     }
 
     switch (command.toUpperCase()) {
@@ -167,26 +165,6 @@ export class RedisCommands {
     return encodeSimpleString("OK");
   }
 
-  private isInTransaction(socket: net.Socket): boolean {
-    const connectionId = this.getConnectionId(socket);
-    return this.transactionState.get(connectionId) || false;
-  }
-
-  private queueCommand(command: string, args: string[], socket: net.Socket): string {
-    const connectionId = this.getConnectionId(socket);
-    const isInTransaction = this.transactionState.get(connectionId) || false;
-
-    if (!isInTransaction) {
-      return encodeError("ERR command not in transaction");
-    }
-
-    const queue = this.commandQueues.get(connectionId) || [];
-    queue.push({command, args});
-    this.commandQueues.set(connectionId, queue);
-
-    return encodeSimpleString("QUEUED");
-  }
-
   private async handleExec(
     args: string[],
     socket: net.Socket
@@ -235,6 +213,30 @@ export class RedisCommands {
       response += result;
     }
     return response;
+  }
+
+  private isInTransaction(socket: net.Socket): boolean {
+    const connectionId = this.getConnectionId(socket);
+    return this.transactionState.get(connectionId) || false;
+  }
+
+  private queueCommand(
+    command: string,
+    args: string[],
+    socket: net.Socket
+  ): string {
+    const connectionId = this.getConnectionId(socket);
+    const isInTransaction = this.transactionState.get(connectionId) || false;
+
+    if (!isInTransaction) {
+      return encodeError("ERR command not in transaction");
+    }
+
+    const queue = this.commandQueues.get(connectionId) || [];
+    queue.push({command, args});
+    this.commandQueues.set(connectionId, queue);
+
+    return encodeSimpleString("QUEUED");
   }
 
   // For testing or debugging
