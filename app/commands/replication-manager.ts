@@ -36,8 +36,8 @@ export class ReplicationManager {
       //Stage 2: Send REPLCONF commands
       await this.sendReplconfCommands();
 
-      // TODO: Stage 3: Send PSYNC command
-      // await this.sendPsyncCommand();
+      // Stage 3: Send PSYNC command
+      await this.sendPsyncCommand();
 
       console.log("Replication handshake completed successfully");
     } catch (error) {
@@ -131,27 +131,47 @@ export class ReplicationManager {
     if (!this.masterConnection) {
       throw new Error("No connection to master");
     }
-    
+
     console.log("Sending REPLCONF commands to master");
-    
+
     // Send listening port (use configured port or default)
     const listeningPort = this.config.port || 6379;
     console.log(`Sending REPLCONF listening-port ${listeningPort}`);
-    const portResponse = await this.sendCommandToMaster("REPLCONF", ["listening-port", listeningPort.toString()]);
+    const portResponse = await this.sendCommandToMaster("REPLCONF", [
+      "listening-port",
+      listeningPort.toString(),
+    ]);
     if (portResponse !== "+OK\r\n") {
-      throw new Error(`Unexpected REPLCONF listening-port response: ${portResponse}`);
+      throw new Error(
+        `Unexpected REPLCONF listening-port response: ${portResponse}`
+      );
     }
-    
+
     // Send capabilities
     console.log("Sending REPLCONF capa psync2");
-    const capaResponse = await this.sendCommandToMaster("REPLCONF", ["capa", "psync2"]);
+    const capaResponse = await this.sendCommandToMaster("REPLCONF", [
+      "capa",
+      "psync2",
+    ]);
     if (capaResponse !== "+OK\r\n") {
       throw new Error(`Unexpected REPLCONF capa response: ${capaResponse}`);
     }
-    
+
     console.log("REPLCONF commands sent successfully");
   }
-  // private async sendPsyncCommand(): Promise<void> { }
+  private async sendPsyncCommand(): Promise<void> {
+    if (!this.masterConnection) {
+      throw new Error("No connection to master");
+    }
+    console.log("Sending PSYNC command to master");
+
+    // For simplicity, we use "?" and "-1" to request full resync
+    const response = await this.sendCommandToMaster("PSYNC", ["?", "-1"]);
+    // if (!response.startsWith("+FULLRESYNC") && !response.startsWith("+CONTINUE")) {
+    //   throw new Error(`Unexpected PSYNC response: ${response}`);
+    // }
+    console.log("PSYNC command sent successfully");
+  }
 
   private cleanup(): void {
     if (this.masterConnection) {
