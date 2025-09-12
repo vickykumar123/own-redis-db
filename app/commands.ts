@@ -120,6 +120,9 @@ export class RedisCommands {
       case "INFO":
         response = this.handleInfo(args);
         break;
+      case "REPLCONF":
+        response = this.handleReplConf(args);
+        break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
     }
@@ -239,9 +242,37 @@ export class RedisCommands {
     return encodeBulkString("");
   }
 
+  private handleReplConf(args: string[]): string {
+    // Basic validation
+    if (args.length < 2 || args.length % 2 !== 0) {
+      return encodeError(
+        "ERR wrong number of arguments for 'replconf' command"
+      );
+    }
+    for (let i = 0; i < args.length; i += 2) {
+      const option = args[i].toLowerCase();
+      const value = args[i + 1];
+      if (option === "listening-port") {
+        const port = parseInt(value, 10);
+        if (isNaN(port) || port <= 0 || port > 65535) {
+          return encodeError("ERR invalid port number");
+        }
+        this.replicationManager.setListeningPort(port);
+      } else if (option === "ip-address") {
+        this.replicationManager.setIpAddress(value);
+      } else if (option === "capa") {
+        // Handle capabilities if needed
+        this.replicationManager.addCapabilities(value.split(" "));
+      } else {
+        return encodeError(`ERR unknown REPLCONF option '${option}'`);
+      }
+    }
+    return encodeSimpleString("OK");
+  }
+
   private buildReplicationInfo(): string {
     const fields = this.replicationManager.getReplicationInfo();
-    
+
     const info = Object.entries(fields)
       .map(([key, value]) => `${key}:${value}`)
       .join("\r\n");
@@ -250,7 +281,7 @@ export class RedisCommands {
   }
 
   // ========== REPLICATION HANDSHAKE ==========
-  
+
   async initiateReplicationHandshake(): Promise<void> {
     return this.replicationManager.initiateHandshake();
   }

@@ -38,7 +38,10 @@ function parseServerArgs(): {port: number; config: ServerConfig} {
 
   return {
     port,
-    config: createServerConfig(configOverrides),
+    config: createServerConfig({
+      ...configOverrides,
+      port: port, // Include the server port in config
+    }),
   };
 }
 
@@ -46,10 +49,10 @@ const {port, config} = parseServerArgs();
 const redisCommands = new RedisCommands(config);
 
 // Start replication handshake if this server is a replica
-if (config.role === 'slave') {
+if (config.role === "slave") {
   // Initiate handshake in background, don't block server startup
-  redisCommands.initiateReplicationHandshake().catch(error => {
-    console.error('Failed to complete replication handshake:', error);
+  redisCommands.initiateReplicationHandshake().catch((error) => {
+    console.error("Failed to complete replication handshake:", error);
   });
 }
 

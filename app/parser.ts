@@ -220,3 +220,12 @@ export function encodeXReadResponse(
 
   return response;
 }
+
+export function encodeRESPCommand(command: string, args: string[]): string {
+  const parts = [command, ...args];
+  let resp = `*${parts.length}\r\n`;
+  for (const part of parts) {
+    resp += `$${part.length}\r\n${part}\r\n`;
+  }
+  return resp;
+}
