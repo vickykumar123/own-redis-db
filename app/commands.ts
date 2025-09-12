@@ -113,6 +113,9 @@ export class RedisCommands {
       case "DISCARD":
         response = this.handleDiscard(args, socket);
         break;
+      case "INFO":
+        response = this.handleInfo(args);
+        break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
     }
@@ -221,6 +224,15 @@ export class RedisCommands {
     this.transactionState.set(connectionId, false);
     this.commandQueues.set(connectionId, []);
     return encodeSimpleString("OK");
+  }
+
+  private handleInfo(args: string[]): string {
+    const isReplicationInfo =
+      args.length === 1 && args[0].toLowerCase() === "replication";
+    if (isReplicationInfo) {
+      return encodeBulkString("role:master");
+    }
+    return encodeBulkString("");
   }
 
   // ========== TRANSACTION HELPERS ==========
