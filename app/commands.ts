@@ -3,6 +3,7 @@ import * as net from "net";
 import {StringCommands} from "./commands/string-commands";
 import {ListCommands} from "./commands/list-commands";
 import {StreamCommands} from "./commands/stream-commands";
+import {ReplicationManager} from "./commands/replication-manager";
 import {type ServerConfig, DEFAULT_SERVER_CONFIG} from "./config/server-config";
 
 // Enhanced key-value store with expiry support
@@ -29,17 +30,17 @@ export class RedisCommands {
   private stringCommands: StringCommands;
   private listCommands: ListCommands;
   private streamCommands: StreamCommands;
+  private replicationManager: ReplicationManager;
   private transactionState: Map<string, boolean> = new Map(); // Per-connection transaction state
   private commandQueues: Map<string, QueuedCommand[]> = new Map(); // Per-connection command queues
   private executingTransaction = false; // Flag to bypass transaction logic during EXEC
-  private config: ServerConfig; // Server configuration
 
   constructor(config: ServerConfig = DEFAULT_SERVER_CONFIG) {
-    this.config = config;
     this.kvStore = new Map<string, KeyValueEntry>();
     this.stringCommands = new StringCommands(this.kvStore);
     this.listCommands = new ListCommands(this.kvStore);
     this.streamCommands = new StreamCommands(this.kvStore);
+    this.replicationManager = new ReplicationManager(config);
   }
 
   // ===== HELPER METHODS =====
@@ -239,34 +240,8 @@ export class RedisCommands {
   }
 
   private buildReplicationInfo(): string {
-    const fields: Record<string, any> = {
-      role: this.config.role,
-    };
-
-    // Add role-specific fields
-    if (this.config.role === "slave") {
-      if (this.config.masterHost) fields.master_host = this.config.masterHost;
-      if (this.config.masterPort) fields.master_port = this.config.masterPort;
-      // Future: master_link_status, master_last_io_seconds_ago, etc.
-    }
-
-    if (this.config.role === "master") {
-      fields.connected_slaves = this.getConnectedSlaves().length;
-      fields.master_replid = this.generateReplicationId();
-      fields.master_repl_offset = 0;
-
-      // Future: Add individual slave info lines
-    }
-
-    // Always include replication offset
-    if (this.config.replicationOffset !== undefined) {
-      fields.master_repl_offset = this.config.replicationOffset;
-    }
-
-    // Future extensibility: Add more fields based on config
-    // if (this.config.replicationId) fields.master_replid = this.config.replicationId;
-    // if (this.config.minReplicas) fields.min_slaves_to_write = this.config.minReplicas;
-
+    const fields = this.replicationManager.getReplicationInfo();
+    
     const info = Object.entries(fields)
       .map(([key, value]) => `${key}:${value}`)
       .join("\r\n");
@@ -274,100 +249,14 @@ export class RedisCommands {
     return encodeBulkString(info);
   }
 
-  private generateReplicationId(): string {
-    return "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb";
-  }
-
-  private getConnectedSlaves(): any[] {
-    // TODO: In future, this will return actual connected replica information
-    // For now, return empty array since we're not tracking connections yet
-    return [];
-  }
-
   // ========== REPLICATION HANDSHAKE ==========
   
   async initiateReplicationHandshake(): Promise<void> {
-    if (this.config.role !== 'slave' || !this.config.masterHost || !this.config.masterPort) {
-      return; // Only replicas initiate handshake
-    }
-
-    try {
-      console.log(`Starting replication handshake with master ${this.config.masterHost}:${this.config.masterPort}`);
-      
-      // Stage 1: Connect and send PING
-      const masterConnection = await this.connectToMaster(this.config.masterHost, this.config.masterPort);
-      await this.sendPingToMaster(masterConnection);
-      
-      // TODO: Stage 2: Send REPLCONF commands
-      // TODO: Stage 3: Send PSYNC command
-      
-      console.log('Replication handshake completed successfully');
-    } catch (error) {
-      console.error('Replication handshake failed:', error);
-    }
+    return this.replicationManager.initiateHandshake();
   }
 
-  private async connectToMaster(host: string, port: number): Promise<net.Socket> {
-    return new Promise((resolve, reject) => {
-      const socket = new net.Socket();
-      
-      socket.connect(port, host, () => {
-        console.log(`Connected to master at ${host}:${port}`);
-        resolve(socket);
-      });
-
-      socket.on('error', (error) => {
-        console.error(`Failed to connect to master: ${error.message}`);
-        reject(error);
-      });
-
-      // Set timeout for connection
-      socket.setTimeout(5000, () => {
-        socket.destroy();
-        reject(new Error('Connection to master timed out'));
-      });
-    });
-  }
-
-  private async sendCommandToMaster(masterSocket: net.Socket, command: string, args: string[]): Promise<string> {
-    return new Promise((resolve, reject) => {
-      // Use existing RESP encoding logic
-      const respCommand = this.encodeRESPCommand(command, args);
-      
-      const onData = (data: Buffer) => {
-        const response = data.toString();
-        masterSocket.off('data', onData);
-        resolve(response);
-      };
-
-      masterSocket.on('data', onData);
-      masterSocket.write(respCommand);
-      
-      setTimeout(() => {
-        masterSocket.off('data', onData);
-        reject(new Error(`${command} to master timed out`));
-      }, 3000);
-    });
-  }
-
-  private encodeRESPCommand(command: string, args: string[]): string {
-    const parts = [command, ...args];
-    let resp = `*${parts.length}\r\n`;
-    for (const part of parts) {
-      resp += `$${part.length}\r\n${part}\r\n`;
-    }
-    return resp;
-  }
-
-  private async sendPingToMaster(masterSocket: net.Socket): Promise<void> {
-    console.log('Sending PING to master');
-    const response = await this.sendCommandToMaster(masterSocket, 'PING', []);
-    
-    if (response !== '+PONG\r\n') {
-      throw new Error(`Unexpected PING response: ${response}`);
-    }
-    
-    console.log('PING handshake successful');
+  getReplicationManager(): ReplicationManager {
+    return this.replicationManager;
   }
 
   // ========== TRANSACTION HELPERS ==========
