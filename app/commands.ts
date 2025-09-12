@@ -244,31 +244,38 @@ export class RedisCommands {
     };
 
     // Add role-specific fields
-    if (this.config.role === 'slave') {
+    if (this.config.role === "slave") {
       if (this.config.masterHost) fields.master_host = this.config.masterHost;
       if (this.config.masterPort) fields.master_port = this.config.masterPort;
       // Future: master_link_status, master_last_io_seconds_ago, etc.
     }
-    
-    if (this.config.role === 'master') {
+
+    if (this.config.role === "master") {
       fields.connected_slaves = this.getConnectedSlaves().length;
+      fields.master_replid = this.generateReplicationId();
+      fields.master_repl_offset = 0;
+
       // Future: Add individual slave info lines
     }
-    
+
     // Always include replication offset
     if (this.config.replicationOffset !== undefined) {
       fields.master_repl_offset = this.config.replicationOffset;
     }
-    
+
     // Future extensibility: Add more fields based on config
     // if (this.config.replicationId) fields.master_replid = this.config.replicationId;
     // if (this.config.minReplicas) fields.min_slaves_to_write = this.config.minReplicas;
-    
+
     const info = Object.entries(fields)
       .map(([key, value]) => `${key}:${value}`)
-      .join('\r\n');
-      
+      .join("\r\n");
+
     return encodeBulkString(info);
+  }
+
+  private generateReplicationId(): string {
+    return "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb";
   }
 
   private getConnectedSlaves(): any[] {
