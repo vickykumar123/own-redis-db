@@ -3,6 +3,7 @@ import * as net from "net";
 import {StringCommands} from "./commands/string-commands";
 import {ListCommands} from "./commands/list-commands";
 import {StreamCommands} from "./commands/stream-commands";
+import {type ServerConfig, DEFAULT_SERVER_CONFIG} from "./config/server-config";
 
 // Enhanced key-value store with expiry support
 export interface KeyValueEntry {
@@ -31,8 +32,10 @@ export class RedisCommands {
   private transactionState: Map<string, boolean> = new Map(); // Per-connection transaction state
   private commandQueues: Map<string, QueuedCommand[]> = new Map(); // Per-connection command queues
   private executingTransaction = false; // Flag to bypass transaction logic during EXEC
+  private config: ServerConfig; // Server configuration
 
-  constructor() {
+  constructor(config: ServerConfig = DEFAULT_SERVER_CONFIG) {
+    this.config = config;
     this.kvStore = new Map<string, KeyValueEntry>();
     this.stringCommands = new StringCommands(this.kvStore);
     this.listCommands = new ListCommands(this.kvStore);
@@ -230,9 +233,48 @@ export class RedisCommands {
     const isReplicationInfo =
       args.length === 1 && args[0].toLowerCase() === "replication";
     if (isReplicationInfo) {
-      return encodeBulkString("role:master");
+      return this.buildReplicationInfo();
     }
     return encodeBulkString("");
+  }
+
+  private buildReplicationInfo(): string {
+    const fields: Record<string, any> = {
+      role: this.config.role,
+    };
+
+    // Add role-specific fields
+    if (this.config.role === 'slave') {
+      if (this.config.masterHost) fields.master_host = this.config.masterHost;
+      if (this.config.masterPort) fields.master_port = this.config.masterPort;
+      // Future: master_link_status, master_last_io_seconds_ago, etc.
+    }
+    
+    if (this.config.role === 'master') {
+      fields.connected_slaves = this.getConnectedSlaves().length;
+      // Future: Add individual slave info lines
+    }
+    
+    // Always include replication offset
+    if (this.config.replicationOffset !== undefined) {
+      fields.master_repl_offset = this.config.replicationOffset;
+    }
+    
+    // Future extensibility: Add more fields based on config
+    // if (this.config.replicationId) fields.master_replid = this.config.replicationId;
+    // if (this.config.minReplicas) fields.min_slaves_to_write = this.config.minReplicas;
+    
+    const info = Object.entries(fields)
+      .map(([key, value]) => `${key}:${value}`)
+      .join('\r\n');
+      
+    return encodeBulkString(info);
+  }
+
+  private getConnectedSlaves(): any[] {
+    // TODO: In future, this will return actual connected replica information
+    // For now, return empty array since we're not tracking connections yet
+    return [];
   }
 
   // ========== TRANSACTION HELPERS ==========
