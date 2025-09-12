@@ -284,6 +284,92 @@ export class RedisCommands {
     return [];
   }
 
+  // ========== REPLICATION HANDSHAKE ==========
+  
+  async initiateReplicationHandshake(): Promise<void> {
+    if (this.config.role !== 'slave' || !this.config.masterHost || !this.config.masterPort) {
+      return; // Only replicas initiate handshake
+    }
+
+    try {
+      console.log(`Starting replication handshake with master ${this.config.masterHost}:${this.config.masterPort}`);
+      
+      // Stage 1: Connect and send PING
+      const masterConnection = await this.connectToMaster(this.config.masterHost, this.config.masterPort);
+      await this.sendPingToMaster(masterConnection);
+      
+      // TODO: Stage 2: Send REPLCONF commands
+      // TODO: Stage 3: Send PSYNC command
+      
+      console.log('Replication handshake completed successfully');
+    } catch (error) {
+      console.error('Replication handshake failed:', error);
+    }
+  }
+
+  private async connectToMaster(host: string, port: number): Promise<net.Socket> {
+    return new Promise((resolve, reject) => {
+      const socket = new net.Socket();
+      
+      socket.connect(port, host, () => {
+        console.log(`Connected to master at ${host}:${port}`);
+        resolve(socket);
+      });
+
+      socket.on('error', (error) => {
+        console.error(`Failed to connect to master: ${error.message}`);
+        reject(error);
+      });
+
+      // Set timeout for connection
+      socket.setTimeout(5000, () => {
+        socket.destroy();
+        reject(new Error('Connection to master timed out'));
+      });
+    });
+  }
+
+  private async sendCommandToMaster(masterSocket: net.Socket, command: string, args: string[]): Promise<string> {
+    return new Promise((resolve, reject) => {
+      // Use existing RESP encoding logic
+      const respCommand = this.encodeRESPCommand(command, args);
+      
+      const onData = (data: Buffer) => {
+        const response = data.toString();
+        masterSocket.off('data', onData);
+        resolve(response);
+      };
+
+      masterSocket.on('data', onData);
+      masterSocket.write(respCommand);
+      
+      setTimeout(() => {
+        masterSocket.off('data', onData);
+        reject(new Error(`${command} to master timed out`));
+      }, 3000);
+    });
+  }
+
+  private encodeRESPCommand(command: string, args: string[]): string {
+    const parts = [command, ...args];
+    let resp = `*${parts.length}\r\n`;
+    for (const part of parts) {
+      resp += `$${part.length}\r\n${part}\r\n`;
+    }
+    return resp;
+  }
+
+  private async sendPingToMaster(masterSocket: net.Socket): Promise<void> {
+    console.log('Sending PING to master');
+    const response = await this.sendCommandToMaster(masterSocket, 'PING', []);
+    
+    if (response !== '+PONG\r\n') {
+      throw new Error(`Unexpected PING response: ${response}`);
+    }
+    
+    console.log('PING handshake successful');
+  }
+
   // ========== TRANSACTION HELPERS ==========
   private shouldQueue(command: string, socket: net.Socket): boolean {
     const controlCommands = ["MULTI", "EXEC", "DISCARD"];

@@ -45,6 +45,14 @@ function parseServerArgs(): {port: number; config: ServerConfig} {
 const {port, config} = parseServerArgs();
 const redisCommands = new RedisCommands(config);
 
+// Start replication handshake if this server is a replica
+if (config.role === 'slave') {
+  // Initiate handshake in background, don't block server startup
+  redisCommands.initiateReplicationHandshake().catch(error => {
+    console.error('Failed to complete replication handshake:', error);
+  });
+}
+
 const server: net.Server = net.createServer((socket: net.Socket) => {
   // Handle connection
   socket.on("data", async (data: Buffer) => {
