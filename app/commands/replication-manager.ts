@@ -48,7 +48,7 @@ export class ReplicationManager {
       await this.sendPsyncCommand();
 
       // Stage 4: Start listening for propagated commands from master
-      this.setupPropagationListener();
+      // this.setupPropagationListener();
 
       console.log("Replication handshake completed successfully");
     } catch (error) {
@@ -179,16 +179,16 @@ export class ReplicationManager {
     // For this simple implementation, just use the basic sendCommandToMaster
     // and let the propagation listener handle any subsequent data
     const response = await this.sendCommandToMaster("PSYNC", ["?", "-1"]);
-    
+
     if (!response.startsWith("+FULLRESYNC")) {
       throw new Error(`Unexpected PSYNC response: ${response}`);
     }
-    
+
     console.log("PSYNC command sent successfully");
-    
+
     // Add a small delay to allow RDB file to be transmitted
     // The propagation listener will be set up after this and can handle subsequent commands
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
   private cleanup(): void {
@@ -247,9 +247,9 @@ export class ReplicationManager {
 
   private getConnectedSlaves(): any[] {
     // Return the replica info objects
-    return this.replicaConnections.map(r => ({ 
-      host: r.host, 
-      port: r.port 
+    return this.replicaConnections.map((r) => ({
+      host: r.host,
+      port: r.port,
     }));
   }
 
@@ -257,35 +257,37 @@ export class ReplicationManager {
 
   addReplicaConnection(socket: net.Socket): void {
     // Check if socket is already tracked to prevent duplicates
-    const existingReplica = this.replicaConnections.find(r => r.socket === socket);
+    const existingReplica = this.replicaConnections.find(
+      (r) => r.socket === socket
+    );
     if (existingReplica) {
       return; // Already tracking this socket
     }
-    
+
     // Get replica info from the socket or use defaults
-    const host = socket.remoteAddress || '127.0.0.1';
+    const host = socket.remoteAddress || "127.0.0.1";
     const port = this.config.port || 6380; // Use the port from REPLCONF listening-port
-    
+
     const replicaInfo: ReplicaInfo = {
       socket,
       host,
-      port
+      port,
     };
-    
+
     this.replicaConnections.push(replicaInfo);
-    
+
     // Clean up when replica disconnects
-    socket.on('close', () => {
+    socket.on("close", () => {
       this.removeReplicaConnection(socket);
     });
-    
-    socket.on('error', () => {
+
+    socket.on("error", () => {
       this.removeReplicaConnection(socket);
     });
   }
 
   private removeReplicaConnection(socket: net.Socket): void {
-    const index = this.replicaConnections.findIndex(r => r.socket === socket);
+    const index = this.replicaConnections.findIndex((r) => r.socket === socket);
     if (index > -1) {
       this.replicaConnections.splice(index, 1);
     }
@@ -295,22 +297,26 @@ export class ReplicationManager {
     // For simplicity, we'll connect to replicas as clients
     // In a real implementation, this would use the replication connection
     // but for the test, connecting as a client works fine
-    
+
     // Since we don't have replica addresses stored, we'll use the replication connection approach
     if (this.replicaConnections.length === 0) {
       return; // No replicas to propagate to
     }
 
     const respCommand = encodeRESPCommand(command, args);
-    console.log(`[DEBUG] Propagating command to ${this.replicaConnections.length} replicas: ${command} ${args.join(' ')}`);
-    
+    console.log(
+      `[DEBUG] Propagating command to ${
+        this.replicaConnections.length
+      } replicas: ${command} ${args.join(" ")}`
+    );
+
     // Send to all connected replicas over their replication connections
     for (const replicaInfo of this.replicaConnections) {
       try {
         console.log(`[DEBUG] Sending command to replica:`, respCommand);
         replicaInfo.socket.write(respCommand);
       } catch (error) {
-        console.error('Failed to propagate command to replica:', error);
+        console.error("Failed to propagate command to replica:", error);
         // The replica will be removed on socket close/error event
       }
     }
@@ -322,69 +328,93 @@ export class ReplicationManager {
 
   private setupPropagationListener(): void {
     if (!this.masterConnection) {
-      console.error("[DEBUG] Cannot setup propagation listener: no master connection");
+      console.error(
+        "[DEBUG] Cannot setup propagation listener: no master connection"
+      );
       return;
     }
-    
-    console.log("[DEBUG] Setting up propagation listener on replication connection");
-    console.log("[DEBUG] Master connection state:", this.masterConnection.readyState);
-    
+
+    console.log(
+      "[DEBUG] Setting up propagation listener on replication connection"
+    );
+    console.log(
+      "[DEBUG] Master connection state:",
+      this.masterConnection.readyState
+    );
+
     // Handle data received from master (propagated commands)
-    this.masterConnection.on('data', (data: Buffer) => {
-      console.log(`[DEBUG] Received propagated data from master: ${data.length} bytes`);
-      console.log(`[DEBUG] Raw data hex:`, data.toString('hex'));
+    this.masterConnection.on("data", (data: Buffer) => {
+      console.log(
+        `[DEBUG] Received propagated data from master: ${data.length} bytes`
+      );
+      console.log(`[DEBUG] Raw data hex:`, data.toString("hex"));
       console.log(`[DEBUG] Data as string:`, JSON.stringify(data.toString()));
-      
+
       // Append new data to buffer
       this.buffer = Buffer.concat([this.buffer, data]);
-      
+
       this.handleBuffer();
     });
   }
-  
+
   private handleBuffer(): void {
     // Process all complete commands in the buffer
     while (this.buffer.length > 0) {
       try {
         // Try to parse a complete RESP command from the buffer
         const parsedCommand = parseRESPCommand(this.buffer);
-        
+
         if (!parsedCommand) {
           // If we can't parse a command, wait for more data
-          console.log("[DEBUG] Incomplete command in buffer, waiting for more data");
+          console.log(
+            "[DEBUG] Incomplete command in buffer, waiting for more data"
+          );
           break;
         }
-        
-        const { command, args } = parsedCommand;
-        console.log(`[DEBUG] Parsed command: ${command} ${args.join(' ')}`);
-        
+
+        const {command, args} = parsedCommand;
+        console.log(`[DEBUG] Parsed command: ${command} ${args.join(" ")}`);
+
         // Calculate how many bytes this command consumed to update buffer
         const commandBytes = this.calculateCommandBytes(command, args);
         this.buffer = this.buffer.subarray(commandBytes);
-        
+
         // Handle REPLCONF GETACK command directly
-        if (command.toUpperCase() === "REPLCONF" && args.length >= 2 && args[0].toUpperCase() === "GETACK") {
-          console.log("[DEBUG] *** DETECTED REPLCONF GETACK - Responding directly ***");
+        if (
+          command.toUpperCase() === "REPLCONF" &&
+          args.length >= 2 &&
+          args[0].toUpperCase() === "GETACK"
+        ) {
+          console.log(
+            "[DEBUG] *** DETECTED REPLCONF GETACK - Responding directly ***"
+          );
           const ackResponse = encodeArray(["REPLCONF", "ACK", "0"]);
-          console.log("[DEBUG] Sending ACK response:", JSON.stringify(ackResponse));
+          console.log(
+            "[DEBUG] Sending ACK response:",
+            JSON.stringify(ackResponse)
+          );
           this.masterConnection!.write(ackResponse);
           console.log("[DEBUG] *** ACK response sent to master ***");
           continue;
         }
-        
+
         // For other commands (SET, etc.), forward to own server for processing
         console.log("[DEBUG] Forwarding non-GETACK command to own server");
         const respCommand = encodeRESPCommand(command, args);
-        const client = net.createConnection({ port: this.config.port || 6379, host: '127.0.0.1' }, () => {
-          console.log("[DEBUG] Connected to own server to process propagated command");
-          client.write(respCommand);
-          client.end(); // Close immediately since no response needed
-        });
-        
-        client.on('error', (error) => {
+        const client = net.createConnection(
+          {port: this.config.port || 6379, host: "127.0.0.1"},
+          () => {
+            console.log(
+              "[DEBUG] Connected to own server to process propagated command"
+            );
+            client.write(respCommand);
+            client.end(); // Close immediately since no response needed
+          }
+        );
+
+        client.on("error", (error) => {
           console.error("[DEBUG] Error connecting to own server:", error);
         });
-        
       } catch (error) {
         console.error("[DEBUG] Error parsing buffer:", error);
         // Clear buffer on parse error to avoid infinite loop
@@ -393,15 +423,15 @@ export class ReplicationManager {
       }
     }
   }
-  
+
   private calculateCommandBytes(command: string, args: string[]): number {
     // Calculate the exact number of bytes for a RESP command
     const parts = [command, ...args];
     let totalBytes = 0;
-    
+
     // Array header: *<count>\r\n
     totalBytes += 1 + parts.length.toString().length + 2; // "*" + count + "\r\n"
-    
+
     // Each part: $<length>\r\n<data>\r\n
     for (const part of parts) {
       totalBytes += 1; // "$"
@@ -410,7 +440,7 @@ export class ReplicationManager {
       totalBytes += part.length; // actual data
       totalBytes += 2; // "\r\n"
     }
-    
+
     return totalBytes;
   }
 }
