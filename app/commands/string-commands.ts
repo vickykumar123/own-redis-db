@@ -17,7 +17,9 @@ export class StringCommands {
   handleSet(args: string[]): string {
     if (args.length === 2) {
       // SET key value (no expiry)
+      console.log(`[DEBUG] Setting key: ${args[0]} = ${args[1]}`);
       this.kvStore.set(args[0], {value: args[1]});
+      console.log(`[DEBUG] Store size after SET: ${this.kvStore.size}`);
       return encodeSimpleString("OK");
     }
 
@@ -40,7 +42,9 @@ export class StringCommands {
       return encodeError("ERR wrong number of arguments for 'get' command");
     }
 
+    console.log(`[DEBUG] Getting key: ${args[0]}, store size: ${this.kvStore.size}`);
     const entry = this.kvStore.get(args[0]);
+    console.log(`[DEBUG] Found entry:`, entry);
     if (!entry) {
       return encodeBulkString(null);
     }

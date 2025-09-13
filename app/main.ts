@@ -60,6 +60,8 @@ const server: net.Server = net.createServer((socket: net.Socket) => {
   // Handle connection
   socket.on("data", async (data: Buffer) => {
     try {
+      console.log(`[DEBUG] Received ${data.length} bytes:`, data.toString());
+      
       // Handle multiple commands in a single buffer
       let offset = 0;
       while (offset < data.length) {

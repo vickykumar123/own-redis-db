@@ -56,6 +56,7 @@ export class RedisCommands {
     args: string[],
     socket: net.Socket
   ): Promise<any> {
+    console.log(`[DEBUG] Executing command: ${command} ${args.join(' ')} (isReplica: ${this.replicationManager.isReplica()})`);
     let response: string | undefined;
 
     if (this.shouldQueue(command, socket)) {
