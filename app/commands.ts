@@ -141,8 +141,8 @@ export class RedisCommands {
       this.replicationManager.propagateCommand(command, args);
     }
 
-    // If this is a replica, don't return responses (process commands silently)
-    if (this.replicationManager.isReplica()) {
+    // If this is a replica processing a write command, don't return responses (process commands silently)
+    if (this.replicationManager.isReplica() && this.isWriteCommand(command)) {
       return undefined;
     }
     
