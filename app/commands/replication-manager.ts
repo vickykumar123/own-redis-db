@@ -314,10 +314,16 @@ export class ReplicationManager {
 
   private setupPropagationListener(): void {
     if (!this.masterConnection) {
+      console.error("[DEBUG] Cannot setup propagation listener: no master connection");
       return;
     }
     
     console.log("[DEBUG] Setting up propagation listener on replication connection");
+    console.log("[DEBUG] Master connection state:", this.masterConnection.readyState);
+    
+    // Remove any existing data handlers to avoid conflicts
+    this.masterConnection.removeAllListeners('data');
+    console.log("[DEBUG] Removed all existing data handlers");
     
     // Simply forward all data received from master to our own server
     this.masterConnection.on('data', (data: Buffer) => {
