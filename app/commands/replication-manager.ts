@@ -1,6 +1,6 @@
 import * as net from "net";
 import {type ServerConfig} from "../config/server-config";
-import {encodeRESPCommand, parseRESPCommand, encodeArray} from "../parser";
+import {encodeRESPCommand, parseRESPCommand, encodeArray, encodeSimpleString} from "../parser";
 
 interface ReplicaInfo {
   socket: net.Socket;
@@ -10,15 +10,58 @@ interface ReplicaInfo {
 
 export class ReplicationManager {
   private config: ServerConfig;
+  // Replica-specific properties
   private masterConnection: net.Socket | null = null;
-  private replicaConnections: ReplicaInfo[] = []; // Track connected replicas with their info
-  private buffer: Buffer = Buffer.alloc(0); // Buffer for handling partial RESP commands
+  private buffer: Buffer = Buffer.alloc(0);
+  private replicationOffset: number = 0; // Track bytes processed from master
+  // Master-specific properties  
+  private replicaConnections: ReplicaInfo[] = [];
 
   constructor(config: ServerConfig) {
     this.config = config;
   }
 
-  // ========== PUBLIC METHODS ==========
+  // ========== PUBLIC METHODS (ROLE-AGNOSTIC) ==========
+
+  isReplica(): boolean {
+    return this.config.role === "slave";
+  }
+
+  getReplicationInfo(): Record<string, any> {
+    if (this.config.role === "master") {
+      return this.getMasterReplicationInfo();
+    } else {
+      return this.getReplicaReplicationInfo();
+    }
+  }
+
+  // ========== SHARED HELPER METHODS ==========
+
+  private getMasterReplicationInfo(): Record<string, any> {
+    return {
+      role: "master",
+      connected_slaves: this.getConnectedSlaves().length,
+      master_replid: this.generateReplicationId(),
+      master_repl_offset: this.config.replicationOffset || 0,
+    };
+  }
+
+  private getReplicaReplicationInfo(): Record<string, any> {
+    const fields: Record<string, any> = {
+      role: this.config.role,
+    };
+
+    if (this.config.role === "slave") {
+      if (this.config.masterHost) fields.master_host = this.config.masterHost;
+      if (this.config.masterPort) fields.master_port = this.config.masterPort;
+      // Use the tracked replication offset
+      fields.master_repl_offset = this.replicationOffset;
+    }
+
+    return fields;
+  }
+
+  // ========== REPLICA METHODS ==========
 
   async initiateHandshake(): Promise<void> {
     if (
@@ -57,15 +100,11 @@ export class ReplicationManager {
     }
   }
 
-  isReplica(): boolean {
-    return this.config.role === "slave";
-  }
-
   getMasterConnection(): net.Socket | null {
     return this.masterConnection;
   }
 
-  // ========== PRIVATE HANDSHAKE METHODS ==========
+  // ========== REPLICA PRIVATE METHODS ==========
 
   private async connectToMaster(
     host: string,
@@ -287,33 +326,7 @@ export class ReplicationManager {
     }
   }
 
-  // ========== REPLICATION INFO ==========
-
-  getReplicationInfo(): Record<string, any> {
-    const fields: Record<string, any> = {
-      role: this.config.role,
-    };
-
-    // Add role-specific fields
-    if (this.config.role === "slave") {
-      if (this.config.masterHost) fields.master_host = this.config.masterHost;
-      if (this.config.masterPort) fields.master_port = this.config.masterPort;
-      // TODO: master_link_status, master_last_io_seconds_ago, etc.
-    }
-
-    if (this.config.role === "master") {
-      fields.connected_slaves = this.getConnectedSlaves().length;
-      fields.master_replid = this.generateReplicationId();
-      fields.master_repl_offset = 0;
-    }
-
-    // Always include replication offset
-    if (this.config.replicationOffset !== undefined) {
-      fields.master_repl_offset = this.config.replicationOffset;
-    }
-
-    return fields;
-  }
+  // ========== SHARED CONFIGURATION METHODS ==========
 
   private generateReplicationId(): string {
     return "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb";
@@ -342,7 +355,7 @@ export class ReplicationManager {
     }));
   }
 
-  // ========== REPLICA CONNECTION MANAGEMENT ==========
+  // ========== MASTER METHODS ==========
 
   addReplicaConnection(socket: net.Socket): void {
     // Check if socket is already tracked to prevent duplicates
@@ -415,6 +428,57 @@ export class ReplicationManager {
     return this.replicaConnections.length;
   }
 
+  handlePsync(args: string[], socket?: net.Socket): string | undefined {
+    if (args.length !== 2) {
+      return encodeSimpleString("ERR wrong number of arguments for 'psync' command");
+    }
+
+    const replicaId = args[0];
+    const offset = args[1];
+
+    if (replicaId === "?" && offset === "-1") {
+      const replicaInfo = this.getMasterReplicationInfo();
+      const masterReplId = replicaInfo.master_replid || "unknown";
+      const masterReplOffset = replicaInfo.master_repl_offset || 0;
+
+      // Send FULLRESYNC response first
+      const fullresyncResponse = encodeSimpleString(
+        `FULLRESYNC ${masterReplId} ${masterReplOffset}`
+      );
+
+      // Send empty RDB file after FULLRESYNC response
+      if (socket) {
+        // Send FULLRESYNC first
+        socket.write(fullresyncResponse);
+
+        // Then send empty RDB file
+        this.sendEmptyRDBFile(socket);
+
+        // Register this connection as a replica
+        this.addReplicaConnection(socket);
+
+        return undefined; // Don't return response since we already wrote to socket
+      }
+
+      return fullresyncResponse;
+    }
+    return encodeSimpleString("ERR PSYNC not fully implemented");
+  }
+
+  private sendEmptyRDBFile(socket: net.Socket): void {
+    // Empty RDB file hex representation
+    const emptyRDBHex =
+      "524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2";
+
+    // Convert hex to binary
+    const rdbData = Buffer.from(emptyRDBHex, "hex");
+
+    // Send RDB file in the format: $<length>\r\n<binary_contents>
+    const rdbResponse = `$${rdbData.length}\r\n`;
+    socket.write(rdbResponse);
+    socket.write(rdbData);
+  }
+
   private setupPropagationListener(): void {
     if (!this.masterConnection) {
       console.error(
@@ -477,20 +541,33 @@ export class ReplicationManager {
           console.log(
             "[DEBUG] *** DETECTED REPLCONF GETACK - Responding directly ***"
           );
-          const ackResponse = encodeArray(["REPLCONF", "ACK", "0"]);
+          // Respond with current offset (BEFORE processing this GETACK)
+          const currentOffset = this.replicationOffset;
+          const ackResponse = encodeArray(["REPLCONF", "ACK", currentOffset.toString()]);
           console.log(
-            "[DEBUG] Sending ACK response:",
+            `[DEBUG] Sending ACK response with offset ${currentOffset}:`,
             JSON.stringify(ackResponse)
           );
           if (this.masterConnection) {
             this.masterConnection.write(ackResponse);
           }
           console.log("[DEBUG] *** ACK response sent to master ***");
+          
+          // NOW update offset to include this GETACK command
+          this.replicationOffset += commandBytes;
+          console.log(`[DEBUG] Updated offset to ${this.replicationOffset} after processing GETACK`);
           continue;
         }
 
-        // For other commands (SET, etc.), forward to own server for processing
-        console.log("[DEBUG] Forwarding non-GETACK command to own server");
+        // For other commands (PING, SET, etc.), process and update offset
+        console.log(`[DEBUG] Processing command: ${command} ${args.join(' ')}`);
+        
+        // Update offset for all commands (including PING)
+        this.replicationOffset += commandBytes;
+        console.log(`[DEBUG] Updated offset to ${this.replicationOffset} after processing ${command}`);
+        
+        // Forward all commands to own server for processing
+        console.log("[DEBUG] Forwarding write command to own server");
         const respCommand = encodeRESPCommand(command, args);
         const client = net.createConnection(
           {port: this.config.port || 6379, host: "127.0.0.1"},
