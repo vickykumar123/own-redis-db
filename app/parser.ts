@@ -229,3 +229,23 @@ export function encodeRESPCommand(command: string, args: string[]): string {
   }
   return resp;
 }
+
+export function calculateRESPCommandBytes(command: string, args: string[]): number {
+  // Calculate the exact number of bytes for a RESP command
+  const parts = [command, ...args];
+  let totalBytes = 0;
+  
+  // Array header: *<count>\r\n
+  totalBytes += 1 + parts.length.toString().length + 2; // "*" + count + "\r\n"
+  
+  // Each part: $<length>\r\n<data>\r\n
+  for (const part of parts) {
+    totalBytes += 1; // "$"
+    totalBytes += part.length.toString().length; // length digits
+    totalBytes += 2; // "\r\n"
+    totalBytes += part.length; // actual data
+    totalBytes += 2; // "\r\n"
+  }
+  
+  return totalBytes;
+}

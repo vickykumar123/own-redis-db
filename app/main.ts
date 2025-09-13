@@ -1,6 +1,6 @@
 // Redis server implementing RESP protocol with expiry support
 import * as net from "net";
-import {parseRESPCommand, encodeError} from "./parser";
+import {parseRESPCommand, encodeError, calculateRESPCommandBytes} from "./parser";
 import {RedisCommands} from "./commands";
 import {type ServerConfig, createServerConfig} from "./config/server-config";
 
@@ -60,21 +60,38 @@ const server: net.Server = net.createServer((socket: net.Socket) => {
   // Handle connection
   socket.on("data", async (data: Buffer) => {
     try {
-      const parsedCommand = parseRESPCommand(data);
+      // Handle multiple commands in a single buffer
+      let offset = 0;
+      while (offset < data.length) {
+        try {
+          const remainingData = data.subarray(offset);
+          const parsedCommand = parseRESPCommand(remainingData);
 
-      if (!parsedCommand) {
-        socket.write(encodeError("ERR Invalid command format"));
-        return;
-      }
+          if (!parsedCommand) {
+            // If we can't parse a command, it might be incomplete
+            // For now, we'll treat it as an error
+            socket.write(encodeError("ERR Invalid command format"));
+            break;
+          }
 
-      const {command, args} = parsedCommand;
-      const response = await redisCommands.executeCommand(
-        command,
-        args,
-        socket
-      );
-      if (response !== undefined) {
-        socket.write(response);
+          const {command, args} = parsedCommand;
+          
+          // Calculate how many bytes this command consumed
+          const commandBytes = calculateRESPCommandBytes(command, args);
+          offset += commandBytes;
+
+          const response = await redisCommands.executeCommand(
+            command,
+            args,
+            socket
+          );
+          if (response !== undefined) {
+            socket.write(response);
+          }
+        } catch (parseError) {
+          // If we can't parse more commands, break the loop
+          break;
+        }
       }
     } catch (error) {
       console.error("Error processing command:", error);
