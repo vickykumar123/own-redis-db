@@ -9,7 +9,7 @@ import * as net from "net";
 import {StringCommands} from "./commands/string-commands";
 import {ListCommands} from "./commands/list-commands";
 import {StreamCommands} from "./commands/stream-commands";
-import {ReplicationManager} from "./commands/replication-manager";
+import {ReplicationManager, type CommandProcessor} from "./commands/replication-manager";
 import {type ServerConfig, DEFAULT_SERVER_CONFIG} from "./config/server-config";
 
 // Enhanced key-value store with expiry support
@@ -31,7 +31,7 @@ export interface QueuedCommand {
   args: string[];
 }
 
-export class RedisCommands {
+export class RedisCommands implements CommandProcessor {
   private kvStore: Map<string, KeyValueEntry>;
   private stringCommands: StringCommands;
   private listCommands: ListCommands;
@@ -47,6 +47,9 @@ export class RedisCommands {
     this.listCommands = new ListCommands(this.kvStore);
     this.streamCommands = new StreamCommands(this.kvStore);
     this.replicationManager = new ReplicationManager(config);
+    
+    // Set up the command processor for direct execution
+    this.replicationManager.setCommandProcessor(this);
   }
 
   // ===== HELPER METHODS =====
@@ -512,5 +515,46 @@ export class RedisCommands {
 
   clearStore(): void {
     this.kvStore.clear();
+  }
+
+  // ========== COMMAND PROCESSOR IMPLEMENTATION ==========
+  
+  executeCommandDirect(command: string, args: string[]): void {
+    console.log(`[REPLICA] executeCommandDirect: ${command} ${args.join(' ')}`);
+    
+    // Process commands directly on the data store without returning responses
+    switch (command.toUpperCase()) {
+      case "SET":
+        this.stringCommands.handleSet(args);
+        console.log(`[REPLICA] Direct SET completed: ${args[0]} = ${args[1]}`);
+        break;
+      case "INCR":
+        this.stringCommands.handleIncr(args);
+        console.log(`[REPLICA] Direct INCR completed: ${args[0]}`);
+        break;
+      case "RPUSH":
+        this.listCommands.handleRPush(args);
+        console.log(`[REPLICA] Direct RPUSH completed: ${args[0]}`);
+        break;
+      case "LPUSH":
+        this.listCommands.handleLPush(args);
+        console.log(`[REPLICA] Direct LPUSH completed: ${args[0]}`);
+        break;
+      case "LPOP":
+        this.listCommands.handleLPop(args);
+        console.log(`[REPLICA] Direct LPOP completed: ${args[0]}`);
+        break;
+      case "XADD":
+        this.streamCommands.handleXAdd(args);
+        console.log(`[REPLICA] Direct XADD completed: ${args[0]}`);
+        break;
+      case "PING":
+        // Just acknowledge PING, no data changes needed
+        console.log(`[REPLICA] Direct PING acknowledged`);
+        break;
+      default:
+        console.log(`[REPLICA] Ignoring unsupported direct command: ${command}`);
+        break;
+    }
   }
 }

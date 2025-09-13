@@ -2,6 +2,11 @@ import * as net from "net";
 import {type ServerConfig} from "../config/server-config";
 import {encodeRESPCommand, parseRESPCommand, encodeArray, encodeSimpleString} from "../parser";
 
+// Interface for direct command execution without TCP
+export interface CommandProcessor {
+  executeCommandDirect(command: string, args: string[]): void;
+}
+
 interface ReplicaInfo {
   socket: net.Socket;
   port: number;
@@ -10,6 +15,7 @@ interface ReplicaInfo {
 
 export class ReplicationManager {
   private config: ServerConfig;
+  private commandProcessor: CommandProcessor | null = null; // Direct command processor
   // Replica-specific properties
   private masterConnection: net.Socket | null = null;
   private buffer: Buffer = Buffer.alloc(0);
@@ -349,6 +355,12 @@ export class ReplicationManager {
     }));
   }
 
+  // ========== SHARED METHODS ==========
+  
+  setCommandProcessor(processor: CommandProcessor): void {
+    this.commandProcessor = processor;
+  }
+
   // ========== MASTER METHODS ==========
 
   addReplicaConnection(socket: net.Socket): void {
@@ -632,34 +644,19 @@ export class ReplicationManager {
         this.replicationOffset += commandBytes;
         console.log(`[DEBUG] Updated offset to ${this.replicationOffset} after processing ${command}`);
         
-        // THIS IS THE PROBLEM: Creating TCP connection back to self!
-        console.log(`[REPLICA] !!!! SENDING TCP COMMAND TO SELF: ${command} ${args.join(' ')}`);
-        try {
-          const respCommand = encodeRESPCommand(command, args);
-          console.log(`[REPLICA] !!!! TCP Command being sent:`, JSON.stringify(respCommand));
-          
-          const client = net.createConnection(
-            {port: this.config.port || 6379, host: "127.0.0.1"},
-            () => {
-              console.log(`[REPLICA] !!!! Connected to own server on port ${this.config.port || 6379}`);
-              client.write(respCommand);
-              client.end();
-            }
-          );
-
-          client.on("data", (data) => {
-            console.log(`[REPLICA] !!!! RECEIVED RESPONSE FROM SELF:`, JSON.stringify(data.toString()));
-          });
-
-          client.on("error", (error) => {
-            console.error(`[REPLICA] !!!! Error connecting to own server:`, error);
-          });
-
-          client.on("close", () => {
-            console.log(`[REPLICA] !!!! Connection to self closed`);
-          });
-        } catch (error) {
-          console.error(`[REPLICA] !!!! Error in TCP self-connection:`, error);
+        // FIXED: Use direct command processing instead of TCP self-connection!
+        console.log(`[REPLICA] Processing command directly: ${command} ${args.join(' ')}`);
+        
+        if (this.commandProcessor) {
+          try {
+            // Process command directly without TCP layer
+            this.commandProcessor.executeCommandDirect(command, args);
+            console.log(`[REPLICA] Successfully processed: ${command}`);
+          } catch (error) {
+            console.error(`[REPLICA] Error processing command directly:`, error);
+          }
+        } else {
+          console.error(`[REPLICA] No command processor available - command not executed: ${command}`);
         }
       } catch (error) {
         console.error("[DEBUG] Error parsing buffer:", error);
