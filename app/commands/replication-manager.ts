@@ -111,12 +111,18 @@ export class ReplicationManager {
 
       const onData = (data: Buffer) => {
         const response = data.toString();
-        this.masterConnection!.off("data", onData);
+        if (this.masterConnection) {
+          this.masterConnection.off("data", onData);
+        }
         resolve(response);
       };
 
-      this.masterConnection!.on("data", onData);
-      this.masterConnection!.write(respCommand);
+      if (this.masterConnection) {
+        this.masterConnection.on("data", onData);
+        this.masterConnection.write(respCommand);
+      } else {
+        reject(new Error("No connection to master"));
+      }
 
       setTimeout(() => {
         if (this.masterConnection) {
@@ -201,57 +207,74 @@ export class ReplicationManager {
           
           // Skip past the FULLRESYNC line
           this.buffer = this.buffer.subarray(fullresyncEndIndex + 2);
+          console.log(`[DEBUG] After FULLRESYNC line, buffer length: ${this.buffer.length}`);
+          console.log(`[DEBUG] After FULLRESYNC line, buffer hex:`, this.buffer.toString('hex'));
           
-          // Parse RDB file format: $<length>\r\n<data>
-          if (this.buffer.length > 0 && this.buffer[0] === 36) { // '$'
-            const rdbLengthEndIndex = this.buffer.indexOf("\r\n");
-            if (rdbLengthEndIndex === -1) {
-              console.log("[DEBUG] Waiting for RDB length");
-              return; // Wait for complete RDB length
-            }
-            
-            const rdbLengthStr = this.buffer.subarray(1, rdbLengthEndIndex).toString();
-            const rdbLength = parseInt(rdbLengthStr, 10);
-            console.log(`[DEBUG] RDB file length: ${rdbLength}`);
-            
-            // Check if we have the complete RDB file
-            const rdbDataStart = rdbLengthEndIndex + 2;
-            const rdbDataEnd = rdbDataStart + rdbLength;
-            
-            if (this.buffer.length < rdbDataEnd) {
-              console.log(`[DEBUG] Waiting for complete RDB file: have ${this.buffer.length}, need ${rdbDataEnd}`);
-              return; // Wait for complete RDB file
-            }
-            
-            // Skip past the RDB file data (no trailing \r\n after RDB data)
-            this.buffer = this.buffer.subarray(rdbDataEnd);
-            console.log(`[DEBUG] RDB file parsed successfully, remaining buffer: ${this.buffer.length} bytes`);
-            console.log(`[DEBUG] Remaining buffer hex:`, this.buffer.toString('hex'));
+          // Continue processing to handle any additional data in this same packet
+          // Don't remove the handler yet - let it process RDB and subsequent commands
+        }
+        
+        // Process RDB file if we have one in the buffer
+        if (this.buffer.length > 0 && this.buffer[0] === 36) { // '$'
+          const rdbLengthEndIndex = this.buffer.indexOf("\r\n");
+          if (rdbLengthEndIndex === -1) {
+            console.log("[DEBUG] Waiting for RDB length");
+            return; // Wait for complete RDB length
           }
           
-          // Remove the PSYNC handler and resolve
-          this.masterConnection!.off('data', psyncHandler);
-          console.log("PSYNC command sent successfully");
-          resolve();
+          const rdbLengthStr = this.buffer.subarray(1, rdbLengthEndIndex).toString();
+          const rdbLength = parseInt(rdbLengthStr, 10);
+          console.log(`[DEBUG] RDB file length: ${rdbLength}`);
           
-          // Process any remaining data (like GETACK commands) in the buffer
-          if (this.buffer.length > 0) {
-            console.log("[DEBUG] Processing remaining buffer data after RDB");
-            this.handleBuffer();
+          // Check if we have the complete RDB file
+          const rdbDataStart = rdbLengthEndIndex + 2;
+          const rdbDataEnd = rdbDataStart + rdbLength;
+          
+          if (this.buffer.length < rdbDataEnd) {
+            console.log(`[DEBUG] Waiting for complete RDB file: have ${this.buffer.length}, need ${rdbDataEnd}`);
+            return; // Wait for complete RDB file
+          }
+          
+          // Skip past the RDB file data (no trailing \r\n after RDB data)
+          this.buffer = this.buffer.subarray(rdbDataEnd);
+          console.log(`[DEBUG] RDB file parsed successfully, remaining buffer: ${this.buffer.length} bytes`);
+          console.log(`[DEBUG] Remaining buffer hex:`, this.buffer.toString('hex'));
+          
+          // If we processed FULLRESYNC and RDB, we're ready for commands
+          if (bufferStr.includes("FULLRESYNC")) {
+            // Remove the PSYNC handler and resolve
+            if (this.masterConnection) {
+              this.masterConnection.off('data', psyncHandler);
+            }
+            console.log("PSYNC command sent successfully");
+            resolve();
+            
+            // Process any remaining data (like GETACK commands) in the buffer
+            if (this.buffer.length > 0) {
+              console.log("[DEBUG] Processing remaining buffer data after RDB");
+              this.handleBuffer();
+            }
           }
         }
       };
       
       // Attach the PSYNC handler
-      this.masterConnection.on('data', psyncHandler);
-      
-      // Send PSYNC command
-      const respCommand = encodeRESPCommand("PSYNC", ["?", "-1"]);
-      this.masterConnection.write(respCommand);
+      if (this.masterConnection) {
+        this.masterConnection.on('data', psyncHandler);
+        
+        // Send PSYNC command
+        const respCommand = encodeRESPCommand("PSYNC", ["?", "-1"]);
+        this.masterConnection.write(respCommand);
+      } else {
+        reject(new Error("No connection to master"));
+        return;
+      }
       
       // Set timeout for PSYNC response
       setTimeout(() => {
-        this.masterConnection!.off('data', psyncHandler);
+        if (this.masterConnection) {
+          this.masterConnection.off('data', psyncHandler);
+        }
         reject(new Error("PSYNC command timed out"));
       }, 5000);
     });
@@ -459,7 +482,9 @@ export class ReplicationManager {
             "[DEBUG] Sending ACK response:",
             JSON.stringify(ackResponse)
           );
-          this.masterConnection!.write(ackResponse);
+          if (this.masterConnection) {
+            this.masterConnection.write(ackResponse);
+          }
           console.log("[DEBUG] *** ACK response sent to master ***");
           continue;
         }
