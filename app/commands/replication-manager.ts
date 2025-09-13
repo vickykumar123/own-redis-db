@@ -505,6 +505,35 @@ export class ReplicationManager {
   }
 
   private handleBuffer(): void {
+    // First, check if we need to skip RDB file data
+    if (this.buffer.length > 0 && this.buffer[0] === 36) { // '$' - RDB file marker
+      console.log("[DEBUG] Detected RDB file in buffer, parsing...");
+      
+      const rdbLengthEndIndex = this.buffer.indexOf("\r\n");
+      if (rdbLengthEndIndex === -1) {
+        console.log("[DEBUG] Waiting for complete RDB length line");
+        return; // Wait for complete RDB length line
+      }
+      
+      const rdbLengthStr = this.buffer.subarray(1, rdbLengthEndIndex).toString();
+      const rdbLength = parseInt(rdbLengthStr, 10);
+      console.log(`[DEBUG] RDB file length: ${rdbLength}`);
+      
+      // Check if we have the complete RDB file
+      const rdbDataStart = rdbLengthEndIndex + 2;
+      const rdbDataEnd = rdbDataStart + rdbLength;
+      
+      if (this.buffer.length < rdbDataEnd) {
+        console.log(`[DEBUG] Waiting for complete RDB file: have ${this.buffer.length}, need ${rdbDataEnd}`);
+        return; // Wait for complete RDB file
+      }
+      
+      // Skip past the RDB file data
+      this.buffer = this.buffer.subarray(rdbDataEnd);
+      console.log(`[DEBUG] RDB file skipped, remaining buffer: ${this.buffer.length} bytes`);
+      console.log(`[DEBUG] Remaining buffer hex:`, this.buffer.toString('hex'));
+    }
+
     // Process all complete commands in the buffer
     while (this.buffer.length > 0) {
       try {
