@@ -1,6 +1,6 @@
 import * as net from "net";
 import {type ServerConfig} from "../config/server-config";
-import {encodeRESPCommand} from "../parser";
+import {encodeRESPCommand, parseRESPCommand, encodeArray} from "../parser";
 
 interface ReplicaInfo {
   socket: net.Socket;
@@ -12,6 +12,7 @@ export class ReplicationManager {
   private config: ServerConfig;
   private masterConnection: net.Socket | null = null;
   private replicaConnections: ReplicaInfo[] = []; // Track connected replicas with their info
+  private buffer: Buffer = Buffer.alloc(0); // Buffer for handling partial RESP commands
 
   constructor(config: ServerConfig) {
     this.config = config;
@@ -331,28 +332,85 @@ export class ReplicationManager {
     // Handle data received from master (propagated commands)
     this.masterConnection.on('data', (data: Buffer) => {
       console.log(`[DEBUG] Received propagated data from master: ${data.length} bytes`);
-      console.log(`[DEBUG] Data:`, data.toString());
+      console.log(`[DEBUG] Raw data hex:`, data.toString('hex'));
+      console.log(`[DEBUG] Data as string:`, JSON.stringify(data.toString()));
       
-      // Check if this is a REPLCONF GETACK command
-      if (data.toString().includes('GETACK')) {
-        console.log("[DEBUG] Detected GETACK command - responding directly");
-        // Respond directly with REPLCONF ACK 0 as per the example
-        const ackResponse = `*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$1\r\n0\r\n`;
-        this.masterConnection!.write(ackResponse);
-        console.log("[DEBUG] Sent ACK response to master");
-        return;
-      }
+      // Append new data to buffer
+      this.buffer = Buffer.concat([this.buffer, data]);
       
-      // For other commands (SET, etc.), forward to own server for processing
-      const client = net.createConnection({ port: this.config.port || 6379, host: '127.0.0.1' }, () => {
-        console.log("[DEBUG] Connected to own server to process propagated command");
-        client.write(data);
-        client.end(); // Close immediately since no response needed
-      });
-      
-      client.on('error', (error) => {
-        console.error("[DEBUG] Error connecting to own server:", error);
-      });
+      this.handleBuffer();
     });
+  }
+  
+  private handleBuffer(): void {
+    // Process all complete commands in the buffer
+    while (this.buffer.length > 0) {
+      try {
+        // Try to parse a complete RESP command from the buffer
+        const parsedCommand = parseRESPCommand(this.buffer);
+        
+        if (!parsedCommand) {
+          // If we can't parse a command, wait for more data
+          console.log("[DEBUG] Incomplete command in buffer, waiting for more data");
+          break;
+        }
+        
+        const { command, args } = parsedCommand;
+        console.log(`[DEBUG] Parsed command: ${command} ${args.join(' ')}`);
+        
+        // Calculate how many bytes this command consumed to update buffer
+        const commandBytes = this.calculateCommandBytes(command, args);
+        this.buffer = this.buffer.subarray(commandBytes);
+        
+        // Handle REPLCONF GETACK command directly
+        if (command.toUpperCase() === "REPLCONF" && args.length >= 2 && args[0].toUpperCase() === "GETACK") {
+          console.log("[DEBUG] *** DETECTED REPLCONF GETACK - Responding directly ***");
+          const ackResponse = encodeArray(["REPLCONF", "ACK", "0"]);
+          console.log("[DEBUG] Sending ACK response:", JSON.stringify(ackResponse));
+          this.masterConnection!.write(ackResponse);
+          console.log("[DEBUG] *** ACK response sent to master ***");
+          continue;
+        }
+        
+        // For other commands (SET, etc.), forward to own server for processing
+        console.log("[DEBUG] Forwarding non-GETACK command to own server");
+        const respCommand = encodeRESPCommand(command, args);
+        const client = net.createConnection({ port: this.config.port || 6379, host: '127.0.0.1' }, () => {
+          console.log("[DEBUG] Connected to own server to process propagated command");
+          client.write(respCommand);
+          client.end(); // Close immediately since no response needed
+        });
+        
+        client.on('error', (error) => {
+          console.error("[DEBUG] Error connecting to own server:", error);
+        });
+        
+      } catch (error) {
+        console.error("[DEBUG] Error parsing buffer:", error);
+        // Clear buffer on parse error to avoid infinite loop
+        this.buffer = Buffer.alloc(0);
+        break;
+      }
+    }
+  }
+  
+  private calculateCommandBytes(command: string, args: string[]): number {
+    // Calculate the exact number of bytes for a RESP command
+    const parts = [command, ...args];
+    let totalBytes = 0;
+    
+    // Array header: *<count>\r\n
+    totalBytes += 1 + parts.length.toString().length + 2; // "*" + count + "\r\n"
+    
+    // Each part: $<length>\r\n<data>\r\n
+    for (const part of parts) {
+      totalBytes += 1; // "$"
+      totalBytes += part.length.toString().length; // length digits
+      totalBytes += 2; // "\r\n"
+      totalBytes += part.length; // actual data
+      totalBytes += 2; // "\r\n"
+    }
+    
+    return totalBytes;
   }
 }
