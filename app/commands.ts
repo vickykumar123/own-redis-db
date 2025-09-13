@@ -312,9 +312,10 @@ export class RedisCommands {
         // Handle capabilities if needed
         this.replicationManager.addCapabilities(value.split(" "));
       } else if (option === "ack") {
-        // Handle ACK responses from replicas - just acknowledge and continue
+        // Handle ACK responses from replicas
         console.log(`[DEBUG] Received ACK from replica with offset: ${value}`);
-        // ACK responses don't need any specific processing, just return OK
+        // Update ACK count in replication manager
+        this.replicationManager.handleAck();
       } else {
         return encodeError(`ERR unknown REPLCONF option '${option}'`);
       }

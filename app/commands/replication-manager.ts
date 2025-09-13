@@ -16,6 +16,9 @@ export class ReplicationManager {
   private replicationOffset: number = 0; // Track bytes processed from master
   // Master-specific properties  
   private replicaConnections: ReplicaInfo[] = [];
+  // WAIT command tracking
+  private pendingCommands: number = 0; // Commands sent but not ACKed
+  private ackCount: number = 0; // ACKs received from replicas
 
   constructor(config: ServerConfig) {
     this.config = config;
@@ -406,6 +409,13 @@ export class ReplicationManager {
       } replicas: ${command} ${args.join(" ")}`
     );
 
+    // Track pending commands for write commands (but not REPLCONF GETACK)
+    const isWriteCommand = command.toUpperCase() !== "REPLCONF";
+    if (isWriteCommand) {
+      this.pendingCommands++;
+      console.log(`[DEBUG] Incremented pending commands to ${this.pendingCommands}`);
+    }
+
     // Send to all connected replicas over their replication connections
     for (const replicaInfo of this.replicaConnections) {
       try {
@@ -422,23 +432,59 @@ export class ReplicationManager {
     return this.replicaConnections.length;
   }
 
+  // Method to handle ACK responses
+  handleAck(): void {
+    this.ackCount++;
+    this.pendingCommands--;
+    console.log(`[DEBUG] Received ACK: ackCount=${this.ackCount}, pendingCommands=${this.pendingCommands}`);
+  }
+
+  // Get current pending commands count
+  getPendingCommandsCount(): number {
+    return this.pendingCommands;
+  }
+
   // ========== WAIT COMMAND IMPLEMENTATION ==========
   async waitForReplicas(numReplicas: number, timeoutMs: number): Promise<number> {
-    console.log(`[DEBUG] waitForReplicas: need ${numReplicas}, timeout ${timeoutMs}ms`);
+    console.log(`[DEBUG] waitForReplicas: need ${numReplicas}, timeout ${timeoutMs}ms, pending=${this.pendingCommands}`);
     
-    const startTime = Date.now();
     const connectedReplicas = this.replicaConnections.length;
     
-    // If we don't have enough replicas, return what we have
+    // If no replicas connected, return 0
     if (connectedReplicas === 0) {
       return 0;
     }
     
-    // For the basic WAIT implementation, just return the replica count
-    // In a full implementation, we would send GETACK and wait for responses
-    // but for now, assume all connected replicas are up-to-date
-    console.log(`[DEBUG] Returning ${Math.min(connectedReplicas, numReplicas)} immediately (no GETACK needed)`);
-    return Math.min(connectedReplicas, numReplicas);
+    // If no pending commands, return replica count immediately
+    if (this.pendingCommands === 0) {
+      console.log(`[DEBUG] No pending commands, returning ${connectedReplicas} immediately`);
+      return connectedReplicas;
+    }
+    
+    // Reset ACK count for this WAIT command
+    this.ackCount = 0;
+    
+    // Send GETACK to all replicas
+    console.log(`[DEBUG] Sending GETACK to ${connectedReplicas} replicas`);
+    this.propagateCommand("REPLCONF", ["GETACK", "*"]);
+    
+    // Wait for ACKs or timeout using interval-based approach like Redis-clone
+    return new Promise((resolve) => {
+      const checkInterval = 100; // Check every 100ms like Redis-clone
+      let remainingTimeout = timeoutMs;
+      
+      const intervalId = setInterval(() => {
+        // Check if we have enough ACKs or timeout reached
+        if (this.ackCount >= numReplicas || remainingTimeout <= 0) {
+          clearInterval(intervalId);
+          console.log(`[DEBUG] WAIT completed: ackCount=${this.ackCount}, timeout=${remainingTimeout <= 0}`);
+          const result = this.ackCount;
+          this.ackCount = 0; // Reset for next WAIT command
+          resolve(result);
+        }
+        remainingTimeout -= checkInterval;
+      }, checkInterval);
+    });
   }
 
   handlePsync(args: string[], socket?: net.Socket): string | undefined {
