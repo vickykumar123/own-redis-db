@@ -86,6 +86,7 @@ const server: net.Server = net.createServer((socket: net.Socket) => {
             socket
           );
           if (response !== undefined) {
+            console.log(`[MAIN] Sending response to ${socket.remoteAddress}:${socket.remotePort}: ${JSON.stringify(response.substring(0, 20))}`);
             socket.write(response);
           }
         } catch (parseError) {

@@ -410,6 +410,11 @@ export class ReplicationManager {
     const respCommand = encodeRESPCommand(command, args);
     console.log(`[MASTER] Sending to ${this.replicaConnections.length} replicas: ${command} ${args.join(" ")}`);
     console.log(`[MASTER] Encoded command:`, JSON.stringify(respCommand));
+    
+    // Debug: Show which sockets we're sending to
+    this.replicaConnections.forEach((replica, index) => {
+      console.log(`[MASTER] Replica ${index}: ${replica.socket.remoteAddress}:${replica.socket.remotePort}`);
+    });
 
     // Track pending commands for write commands (but not REPLCONF GETACK)
     const isWriteCommand = command.toUpperCase() !== "REPLCONF";
