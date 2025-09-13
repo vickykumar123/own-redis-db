@@ -44,10 +44,10 @@ export class ReplicationManager {
       //Stage 2: Send REPLCONF commands
       await this.sendReplconfCommands();
 
-      // Stage 3: Send PSYNC command and handle RDB properly
+      // Stage 3: Send PSYNC command and handle RDB properly (this includes initial buffer processing)
       await this.sendPsyncCommand();
 
-      // Stage 4: Start listening for propagated commands from master
+      // Stage 4: Start listening for propagated commands from master (after RDB is processed)
       this.setupPropagationListener();
 
       console.log("Replication handshake completed successfully");
@@ -176,19 +176,85 @@ export class ReplicationManager {
     }
     console.log("Sending PSYNC command to master");
 
-    // For this simple implementation, just use the basic sendCommandToMaster
-    // and let the propagation listener handle any subsequent data
-    const response = await this.sendCommandToMaster("PSYNC", ["?", "-1"]);
-
-    if (!response.startsWith("+FULLRESYNC")) {
-      throw new Error(`Unexpected PSYNC response: ${response}`);
-    }
-
-    console.log("PSYNC command sent successfully");
-
-    // Add a small delay to allow RDB file to be transmitted
-    // The propagation listener will be set up after this and can handle subsequent commands
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    return new Promise((resolve, reject) => {
+      // Set up special handler for PSYNC response and RDB file
+      const psyncHandler = (data: Buffer) => {
+        console.log(`[DEBUG] PSYNC response received: ${data.length} bytes`);
+        console.log(`[DEBUG] PSYNC data hex:`, data.toString('hex'));
+        console.log(`[DEBUG] PSYNC data string:`, JSON.stringify(data.toString()));
+        
+        // Append to buffer for processing
+        this.buffer = Buffer.concat([this.buffer, data]);
+        
+        const bufferStr = this.buffer.toString();
+        
+        // Check for FULLRESYNC response
+        if (bufferStr.includes("FULLRESYNC")) {
+          console.log("PSYNC FULLRESYNC response detected");
+          
+          // Find the end of the FULLRESYNC line
+          const fullresyncEndIndex = this.buffer.indexOf("\r\n");
+          if (fullresyncEndIndex === -1) {
+            console.log("[DEBUG] Waiting for complete FULLRESYNC line");
+            return; // Wait for complete line
+          }
+          
+          // Skip past the FULLRESYNC line
+          this.buffer = this.buffer.subarray(fullresyncEndIndex + 2);
+          
+          // Parse RDB file format: $<length>\r\n<data>
+          if (this.buffer.length > 0 && this.buffer[0] === 36) { // '$'
+            const rdbLengthEndIndex = this.buffer.indexOf("\r\n");
+            if (rdbLengthEndIndex === -1) {
+              console.log("[DEBUG] Waiting for RDB length");
+              return; // Wait for complete RDB length
+            }
+            
+            const rdbLengthStr = this.buffer.subarray(1, rdbLengthEndIndex).toString();
+            const rdbLength = parseInt(rdbLengthStr, 10);
+            console.log(`[DEBUG] RDB file length: ${rdbLength}`);
+            
+            // Check if we have the complete RDB file
+            const rdbDataStart = rdbLengthEndIndex + 2;
+            const rdbDataEnd = rdbDataStart + rdbLength;
+            
+            if (this.buffer.length < rdbDataEnd) {
+              console.log(`[DEBUG] Waiting for complete RDB file: have ${this.buffer.length}, need ${rdbDataEnd}`);
+              return; // Wait for complete RDB file
+            }
+            
+            // Skip past the RDB file data (no trailing \r\n after RDB data)
+            this.buffer = this.buffer.subarray(rdbDataEnd);
+            console.log(`[DEBUG] RDB file parsed successfully, remaining buffer: ${this.buffer.length} bytes`);
+            console.log(`[DEBUG] Remaining buffer hex:`, this.buffer.toString('hex'));
+          }
+          
+          // Remove the PSYNC handler and resolve
+          this.masterConnection!.off('data', psyncHandler);
+          console.log("PSYNC command sent successfully");
+          resolve();
+          
+          // Process any remaining data (like GETACK commands) in the buffer
+          if (this.buffer.length > 0) {
+            console.log("[DEBUG] Processing remaining buffer data after RDB");
+            this.handleBuffer();
+          }
+        }
+      };
+      
+      // Attach the PSYNC handler
+      this.masterConnection.on('data', psyncHandler);
+      
+      // Send PSYNC command
+      const respCommand = encodeRESPCommand("PSYNC", ["?", "-1"]);
+      this.masterConnection.write(respCommand);
+      
+      // Set timeout for PSYNC response
+      setTimeout(() => {
+        this.masterConnection!.off('data', psyncHandler);
+        reject(new Error("PSYNC command timed out"));
+      }, 5000);
+    });
   }
 
   private cleanup(): void {
