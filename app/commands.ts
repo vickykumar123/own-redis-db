@@ -133,6 +133,9 @@ export class RedisCommands {
       case "REPLCONF":
         response = this.handleReplConf(args);
         break;
+      case "GETACK":
+        response = this.handleReplConf(["GETACK", "*"]);
+        break;
       case "PSYNC":
         response = this.handlePsync(args, socket);
         break;
