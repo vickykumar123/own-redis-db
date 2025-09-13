@@ -86,8 +86,13 @@ const server: net.Server = net.createServer((socket: net.Socket) => {
             socket
           );
           if (response !== undefined) {
-            console.log(`[MAIN] Sending response to ${socket.remoteAddress}:${socket.remotePort}: ${JSON.stringify(response.substring(0, 20))}`);
-            socket.write(response);
+            // Check if this is a replica socket - replicas should not receive responses
+            if (redisCommands.isReplicaSocket(socket)) {
+              console.log(`[MAIN] SKIPPING response to replica ${socket.remoteAddress}:${socket.remotePort}: ${JSON.stringify(response.substring(0, 20))}`);
+            } else {
+              console.log(`[MAIN] Sending response to client ${socket.remoteAddress}:${socket.remotePort}: ${JSON.stringify(response.substring(0, 20))}`);
+              socket.write(response);
+            }
           }
         } catch (parseError) {
           // If we can't parse more commands, break the loop

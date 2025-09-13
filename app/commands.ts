@@ -58,6 +58,11 @@ export class RedisCommands implements CommandProcessor {
     return `${socket.remoteAddress}:${socket.remotePort}`;
   }
 
+  // Check if this socket is a replica connection (should not receive responses)
+  isReplicaSocket(socket: net.Socket): boolean {
+    return this.replicationManager.isReplicaSocket(socket);
+  }
+
   // ===== COMMAND HANDLERS =====
 
   async executeCommand(

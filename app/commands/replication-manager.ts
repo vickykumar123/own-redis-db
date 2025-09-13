@@ -361,6 +361,11 @@ export class ReplicationManager {
     this.commandProcessor = processor;
   }
 
+  // Check if a socket is a replica connection
+  isReplicaSocket(socket: net.Socket): boolean {
+    return this.replicaConnections.some((replica) => replica.socket === socket);
+  }
+
   // ========== MASTER METHODS ==========
 
   addReplicaConnection(socket: net.Socket): void {
