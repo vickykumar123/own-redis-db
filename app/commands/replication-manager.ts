@@ -5,6 +5,7 @@ import {encodeRESPCommand} from "../parser";
 export class ReplicationManager {
   private config: ServerConfig;
   private masterConnection: net.Socket | null = null;
+  private replicaConnections: net.Socket[] = []; // Track connected replicas
 
   constructor(config: ServerConfig) {
     this.config = config;
@@ -228,7 +229,56 @@ export class ReplicationManager {
   }
 
   private getConnectedSlaves(): any[] {
-    // TODO: In future, this will return actual connected replica information
-    return [];
+    // Return the count of connected replicas
+    return this.replicaConnections;
+  }
+
+  // ========== REPLICA CONNECTION MANAGEMENT ==========
+
+  addReplicaConnection(socket: net.Socket): void {
+    // Check if socket is already tracked to prevent duplicates
+    if (this.replicaConnections.includes(socket)) {
+      return; // Already tracking this socket
+    }
+    
+    this.replicaConnections.push(socket);
+    
+    // Clean up when replica disconnects
+    socket.on('close', () => {
+      this.removeReplicaConnection(socket);
+    });
+    
+    socket.on('error', () => {
+      this.removeReplicaConnection(socket);
+    });
+  }
+
+  private removeReplicaConnection(socket: net.Socket): void {
+    const index = this.replicaConnections.indexOf(socket);
+    if (index > -1) {
+      this.replicaConnections.splice(index, 1);
+    }
+  }
+
+  propagateCommand(command: string, args: string[]): void {
+    if (this.replicaConnections.length === 0) {
+      return; // No replicas to propagate to
+    }
+
+    const respCommand = encodeRESPCommand(command, args);
+    
+    // Send to all connected replicas
+    for (const replica of this.replicaConnections) {
+      try {
+        replica.write(respCommand);
+      } catch (error) {
+        console.error('Failed to propagate command to replica:', error);
+        // The replica will be removed on socket close/error event
+      }
+    }
+  }
+
+  getReplicaCount(): number {
+    return this.replicaConnections.length;
   }
 }

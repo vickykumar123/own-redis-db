@@ -130,6 +130,11 @@ export class RedisCommands {
         response = encodeError(`ERR unknown command '${command}'`);
     }
 
+    // Propagate write commands to replicas (only if this is the master and not during transaction execution)
+    if (response && !this.executingTransaction && this.isWriteCommand(command) && !response.startsWith('-') && !this.replicationManager.isReplica()) {
+      this.replicationManager.propagateCommand(command, args);
+    }
+
     return response;
   }
 
@@ -298,6 +303,10 @@ export class RedisCommands {
 
         // Then send empty RDB file
         this.sendEmptyRDBFile(socket);
+        
+        // Register this connection as a replica
+        this.replicationManager.addReplicaConnection(socket);
+        
         return undefined; // Don't return response since we already wrote to socket
       }
 
@@ -338,6 +347,20 @@ export class RedisCommands {
 
   getReplicationManager(): ReplicationManager {
     return this.replicationManager;
+  }
+
+  // ========== REPLICATION HELPERS ==========
+  
+  private isWriteCommand(command: string): boolean {
+    const writeCommands = [
+      "SET", "DEL", "INCR", "DECR", "INCRBY", "DECRBY",
+      "RPUSH", "LPUSH", "LPOP", "RPOP", "LREM", "LSET", "LTRIM",
+      "XADD", "XDEL", "XTRIM",
+      "HSET", "HDEL", "HINCRBY", "HINCRBYFLOAT",
+      "SADD", "SREM", "SPOP", "SMOVE",
+      "ZADD", "ZREM", "ZINCRBY"
+    ];
+    return writeCommands.includes(command.toUpperCase());
   }
 
   // ========== TRANSACTION HELPERS ==========
