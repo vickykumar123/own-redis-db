@@ -175,63 +175,19 @@ export class ReplicationManager {
     }
     console.log("Sending PSYNC command to master");
 
-    // PSYNC is special - it sends FULLRESYNC response AND RDB data
-    // We need to handle both parts
-    const respCommand = encodeRESPCommand("PSYNC", ["?", "-1"]);
+    // For this simple implementation, just use the basic sendCommandToMaster
+    // and let the propagation listener handle any subsequent data
+    const response = await this.sendCommandToMaster("PSYNC", ["?", "-1"]);
     
-    return new Promise((resolve, reject) => {
-      let receivedFullresync = false;
-      let rdbLength: number | null = null;
-      let rdbBytesReceived = 0;
-      
-      const onData = (data: Buffer) => {
-        const response = data.toString();
-        console.log(`[DEBUG] PSYNC response data: ${data.length} bytes`);
-        
-        if (!receivedFullresync && response.includes("FULLRESYNC")) {
-          console.log("Received FULLRESYNC response");
-          receivedFullresync = true;
-          
-          // Look for RDB file length in the same or next data chunk
-          const rdbMatch = response.match(/\$(\d+)\r\n/);
-          if (rdbMatch) {
-            rdbLength = parseInt(rdbMatch[1]);
-            console.log(`[DEBUG] RDB file length: ${rdbLength} bytes`);
-            
-            // Calculate how many RDB bytes we've already received in this chunk
-            const rdbStartIndex = response.indexOf('\r\n', response.indexOf(`$${rdbLength}`)) + 2;
-            rdbBytesReceived = data.length - rdbStartIndex;
-            console.log(`[DEBUG] RDB bytes received so far: ${rdbBytesReceived}/${rdbLength}`);
-            
-            if (rdbBytesReceived >= rdbLength) {
-              console.log("PSYNC command sent successfully - RDB file received");
-              this.masterConnection!.off("data", onData);
-              resolve();
-            }
-          }
-        } else if (receivedFullresync && rdbLength !== null) {
-          // Continue receiving RDB data
-          rdbBytesReceived += data.length;
-          console.log(`[DEBUG] RDB bytes received so far: ${rdbBytesReceived}/${rdbLength}`);
-          
-          if (rdbBytesReceived >= rdbLength) {
-            console.log("PSYNC command sent successfully - RDB file received");
-            this.masterConnection!.off("data", onData);
-            resolve();
-          }
-        }
-      };
-
-      this.masterConnection!.on("data", onData);
-      this.masterConnection!.write(respCommand);
-      
-      setTimeout(() => {
-        if (this.masterConnection) {
-          this.masterConnection.off("data", onData);
-        }
-        reject(new Error("PSYNC to master timed out"));
-      }, 10000); // Longer timeout for RDB transfer
-    });
+    if (!response.startsWith("+FULLRESYNC")) {
+      throw new Error(`Unexpected PSYNC response: ${response}`);
+    }
+    
+    console.log("PSYNC command sent successfully");
+    
+    // Add a small delay to allow RDB file to be transmitted
+    // The propagation listener will be set up after this and can handle subsequent commands
+    await new Promise(resolve => setTimeout(resolve, 100));
   }
 
   private cleanup(): void {
