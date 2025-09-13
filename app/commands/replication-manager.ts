@@ -20,7 +20,7 @@ export class ReplicationManager {
   private pendingCommands: number = 0; // Commands sent but not ACKed
   private ackCount: number = 0; // ACKs received from replicas
 
-  constructor(config: ServerConfig) {
+  constructor(config: ServerConfig, private commandExecutor?: (command: string, args: string[]) => Promise<any>) {
     this.config = config;
   }
 
@@ -228,7 +228,7 @@ export class ReplicationManager {
       let handshakeComplete = false;
       
       // Set up special handler for PSYNC response and RDB file
-      const psyncHandler = (data: Buffer) => {
+      const psyncHandler = async (data: Buffer) => {
         if (handshakeComplete) return; // Ignore if already processed
         
           // Append to buffer for processing
@@ -281,7 +281,7 @@ export class ReplicationManager {
           // Process any remaining commands in the buffer immediately
           if (this.buffer.length > 0) {
             console.log("[DEBUG] Processing remaining buffer after PSYNC");
-            this.handleBuffer();
+            await this.handleBuffer();
           }
           
           resolve();
@@ -549,17 +549,17 @@ export class ReplicationManager {
     console.log("[REPLICA] Setting up propagation listener");
 
     // Handle data received from master (propagated commands)
-    this.masterConnection.on("data", (data: Buffer) => {
+    this.masterConnection.on("data", async (data: Buffer) => {
       console.log(`[REPLICA] <<<< RECEIVED ${data.length} bytes from master`);
       console.log(`[REPLICA] Raw data:`, JSON.stringify(data.toString()));
 
       // Append new data to buffer
       this.buffer = Buffer.concat([this.buffer, data]);
-      this.handleBuffer();
+      await this.handleBuffer();
     });
   }
 
-  private handleBuffer(): void {
+  private async handleBuffer(): Promise<void> {
     // First, check if we need to skip RDB file data
     if (this.buffer.length > 0 && this.buffer[0] === 36) { // '$' - RDB file marker
       console.log("[DEBUG] Detected RDB file in buffer, parsing...");
@@ -644,13 +644,18 @@ export class ReplicationManager {
         this.replicationOffset += commandBytes;
         console.log(`[DEBUG] Updated offset to ${this.replicationOffset} after processing ${command}`);
         
-        // Since the main issue was master-side socket confusion (now fixed),
-        // we don't need to process replica commands here anymore.
-        // The external replica processes handle their own command execution.
-        console.log(`[REPLICA] Command received: ${command} ${args.join(' ')} - handled by external replica`);
-        
-        // Note: For our implementation, this code path is only reached when running as a replica,
-        // but the test uses external replica processes, so this is mainly for logging.
+        // Execute the command on the replica if we have a command executor
+        if (this.commandExecutor) {
+          try {
+            console.log(`[REPLICA] Executing command locally: ${command} ${args.join(' ')}`);
+            await this.commandExecutor(command, args);
+            console.log(`[REPLICA] Command executed successfully: ${command}`);
+          } catch (error) {
+            console.error(`[REPLICA] Error executing command ${command}:`, error);
+          }
+        } else {
+          console.log(`[REPLICA] Command received: ${command} ${args.join(' ')} - no executor available`);
+        }
       } catch (error) {
         console.error("[DEBUG] Error parsing buffer:", error);
         // Clear buffer on parse error to avoid infinite loop

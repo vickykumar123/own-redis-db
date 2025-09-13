@@ -46,7 +46,14 @@ export class RedisCommands {
     this.stringCommands = new StringCommands(this.kvStore);
     this.listCommands = new ListCommands(this.kvStore);
     this.streamCommands = new StreamCommands(this.kvStore);
-    this.replicationManager = new ReplicationManager(config);
+    
+    // Pass a command executor to ReplicationManager so replicas can execute commands locally
+    const commandExecutor = async (command: string, args: string[]) => {
+      // Use a mock socket for replica command execution (no actual network socket needed)
+      const mockSocket = {} as net.Socket;
+      return this.executeCommand(command, args, mockSocket);
+    };
+    this.replicationManager = new ReplicationManager(config, commandExecutor);
   }
 
   // ===== HELPER METHODS =====
