@@ -324,12 +324,34 @@ export class ReplicationManager {
       console.log(`[DEBUG] Received propagated data from master: ${data.length} bytes`);
       console.log(`[DEBUG] Data:`, data.toString());
       
+      // Check if this is a REPLCONF GETACK command that needs a response
+      const isGetAckCommand = data.toString().includes('GETACK');
+      
       // Create a client connection to our own server and send the data
       const client = net.createConnection({ port: this.config.port || 6379, host: '127.0.0.1' }, () => {
         console.log("[DEBUG] Connected to own server to process propagated command");
         client.write(data);
-        client.end();
+        
+        if (!isGetAckCommand) {
+          // For regular commands, close immediately (no response expected)
+          client.end();
+        }
       });
+      
+      if (isGetAckCommand) {
+        // For GETACK commands, wait for response and forward it back to master
+        client.on('data', (response: Buffer) => {
+          console.log(`[DEBUG] Received response from own server:`, response.toString());
+          console.log(`[DEBUG] Forwarding response back to master`);
+          
+          // Send the response back to the master over replication connection
+          if (this.masterConnection) {
+            this.masterConnection.write(response);
+          }
+          
+          client.end();
+        });
+      }
       
       client.on('error', (error) => {
         console.error("[DEBUG] Error connecting to own server:", error);
