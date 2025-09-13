@@ -475,17 +475,15 @@ export class RedisCommands {
       return encodeError("ERR negative number of replicas");
     }
 
-    // For now, return the current number of connected replicas
-    // The test expects 0 when no replicas are connected
+    // Get the current number of connected replicas
     const connectedReplicas = this.replicationManager.getReplicaCount();
     
-    // If we need 0 replicas or we have enough replicas already, return immediately
-    if (numReplicas === 0 || connectedReplicas >= numReplicas) {
-      return encodeInteger(Math.min(connectedReplicas, numReplicas));
-    }
-
-    // For now, just return the current count
-    // TODO: Implement actual waiting logic with GETACK requests
+    console.log(`[DEBUG] WAIT command: requesting ${numReplicas}, have ${connectedReplicas} replicas`);
+    
+    // According to the requirements:
+    // "Even if WAIT is called with a number lesser than the number of connected replicas, 
+    // the master should return the count of connected replicas."
+    // So we always return the actual count of connected replicas
     return encodeInteger(connectedReplicas);
   }
 
