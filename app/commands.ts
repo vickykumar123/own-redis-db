@@ -56,7 +56,7 @@ export class RedisCommands {
     args: string[],
     socket: net.Socket
   ): Promise<any> {
-    let response: string;
+    let response: string | undefined;
 
     if (this.shouldQueue(command, socket)) {
       return this.queueCommand(command, args, socket);
@@ -124,7 +124,7 @@ export class RedisCommands {
         response = this.handleReplConf(args);
         break;
       case "PSYNC":
-        response = this.handlePsync(args);
+        response = this.handlePsync(args, socket);
         break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
@@ -273,11 +273,11 @@ export class RedisCommands {
     return encodeSimpleString("OK");
   }
 
-  private handlePsync(args: string[]): string {
+  private handlePsync(args: string[], socket?: net.Socket): string | undefined {
     if (args.length !== 2) {
       return encodeError("ERR wrong number of arguments for 'psync' command");
     }
-    // PSYNC logic would go here
+
     const replicaId = args[0];
     const offset = args[1];
 
@@ -285,11 +285,39 @@ export class RedisCommands {
       const replicaInfo = this.replicationManager.getReplicationInfo();
       const masterReplId = replicaInfo.master_replid || "unknown";
       const masterReplOffset = replicaInfo.master_repl_offset || 0;
-      return encodeSimpleString(
-        `FULLRESYNC ${masterReplId} ${masterReplOffset}\r\n`
+
+      // Send FULLRESYNC response first
+      const fullresyncResponse = encodeSimpleString(
+        `FULLRESYNC ${masterReplId} ${masterReplOffset}`
       );
+
+      // Send empty RDB file after FULLRESYNC response
+      if (socket) {
+        // Send FULLRESYNC first
+        socket.write(fullresyncResponse);
+
+        // Then send empty RDB file
+        this.sendEmptyRDBFile(socket);
+        return undefined; // Don't return response since we already wrote to socket
+      }
+
+      return fullresyncResponse;
     }
     return encodeError("ERR PSYNC not fully implemented");
+  }
+
+  private sendEmptyRDBFile(socket: net.Socket): void {
+    // Empty RDB file hex representation
+    const emptyRDBHex =
+      "524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2";
+
+    // Convert hex to binary
+    const rdbData = Buffer.from(emptyRDBHex, "hex");
+
+    // Send RDB file in the format: $<length>\r\n<binary_contents>
+    const rdbResponse = `$${rdbData.length}\r\n`;
+    socket.write(rdbResponse);
+    socket.write(rdbData);
   }
 
   private buildReplicationInfo(): string {
