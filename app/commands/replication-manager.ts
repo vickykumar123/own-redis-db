@@ -231,13 +231,10 @@ export class ReplicationManager {
       const psyncHandler = (data: Buffer) => {
         if (handshakeComplete) return; // Ignore if already processed
         
-        console.log(`[DEBUG] PSYNC response received: ${data.length} bytes`);
-        
-        // Append to buffer for processing
+          // Append to buffer for processing
         this.buffer = Buffer.concat([this.buffer, data]);
         
         const bufferStr = this.buffer.toString();
-        console.log(`[DEBUG] Buffer string:`, JSON.stringify(bufferStr.substring(0, 100)));
         
         // Check for FULLRESYNC response and process RDB
         if (bufferStr.includes("FULLRESYNC")) {
@@ -393,21 +390,14 @@ export class ReplicationManager {
   }
 
   propagateCommand(command: string, args: string[]): void {
-    // For simplicity, we'll connect to replicas as clients
-    // In a real implementation, this would use the replication connection
-    // but for the test, connecting as a client works fine
-
-    // Since we don't have replica addresses stored, we'll use the replication connection approach
     if (this.replicaConnections.length === 0) {
-      return; // No replicas to propagate to
+      console.log(`[MASTER] No replicas connected - skipping propagation`);
+      return;
     }
 
     const respCommand = encodeRESPCommand(command, args);
-    console.log(
-      `[DEBUG] Propagating command to ${
-        this.replicaConnections.length
-      } replicas: ${command} ${args.join(" ")}`
-    );
+    console.log(`[MASTER] Sending to ${this.replicaConnections.length} replicas: ${command} ${args.join(" ")}`);
+    console.log(`[MASTER] Encoded command:`, JSON.stringify(respCommand));
 
     // Track pending commands for write commands (but not REPLCONF GETACK)
     const isWriteCommand = command.toUpperCase() !== "REPLCONF";
@@ -540,31 +530,19 @@ export class ReplicationManager {
 
   private setupPropagationListener(): void {
     if (!this.masterConnection) {
-      console.error(
-        "[DEBUG] Cannot setup propagation listener: no master connection"
-      );
+      console.error("[REPLICA] Cannot setup propagation listener: no master connection");
       return;
     }
 
-    console.log(
-      "[DEBUG] Setting up propagation listener on replication connection"
-    );
-    console.log(
-      "[DEBUG] Master connection state:",
-      this.masterConnection.readyState
-    );
+    console.log("[REPLICA] Setting up propagation listener");
 
     // Handle data received from master (propagated commands)
     this.masterConnection.on("data", (data: Buffer) => {
-      console.log(
-        `[DEBUG] Received propagated data from master: ${data.length} bytes`
-      );
-      console.log(`[DEBUG] Raw data hex:`, data.toString("hex"));
-      console.log(`[DEBUG] Data as string:`, JSON.stringify(data.toString()));
+      console.log(`[REPLICA] <<<< RECEIVED ${data.length} bytes from master`);
+      console.log(`[REPLICA] Raw data:`, JSON.stringify(data.toString()));
 
       // Append new data to buffer
       this.buffer = Buffer.concat([this.buffer, data]);
-
       this.handleBuffer();
     });
   }
@@ -614,7 +592,7 @@ export class ReplicationManager {
         }
 
         const {command, args} = parsedCommand;
-        console.log(`[DEBUG] Parsed command: ${command} ${args.join(" ")}`);
+        console.log(`[REPLICA] <<<< PARSED: ${command} ${args.join(" ")}`);
 
         // Calculate how many bytes this command consumed to update buffer
         const commandBytes = this.calculateCommandBytes(command, args);
@@ -654,30 +632,34 @@ export class ReplicationManager {
         this.replicationOffset += commandBytes;
         console.log(`[DEBUG] Updated offset to ${this.replicationOffset} after processing ${command}`);
         
-        // Apply the command directly to avoid TCP overhead
-        console.log("[DEBUG] Applying replicated command directly");
+        // THIS IS THE PROBLEM: Creating TCP connection back to self!
+        console.log(`[REPLICA] !!!! SENDING TCP COMMAND TO SELF: ${command} ${args.join(' ')}`);
         try {
-          // Create a mock request to the RedisCommands system
           const respCommand = encodeRESPCommand(command, args);
-          // For now, we'll still forward via TCP but with better error handling
+          console.log(`[REPLICA] !!!! TCP Command being sent:`, JSON.stringify(respCommand));
+          
           const client = net.createConnection(
             {port: this.config.port || 6379, host: "127.0.0.1"},
             () => {
-              console.log("[DEBUG] Connected to own server to process propagated command");
+              console.log(`[REPLICA] !!!! Connected to own server on port ${this.config.port || 6379}`);
               client.write(respCommand);
-              client.end(); // Close immediately since no response needed
+              client.end();
             }
           );
 
+          client.on("data", (data) => {
+            console.log(`[REPLICA] !!!! RECEIVED RESPONSE FROM SELF:`, JSON.stringify(data.toString()));
+          });
+
           client.on("error", (error) => {
-            console.error("[DEBUG] Error connecting to own server:", error);
+            console.error(`[REPLICA] !!!! Error connecting to own server:`, error);
           });
 
           client.on("close", () => {
-            console.log("[DEBUG] Connection closed after processing command");
+            console.log(`[REPLICA] !!!! Connection to self closed`);
           });
         } catch (error) {
-          console.error("[DEBUG] Error processing replicated command:", error);
+          console.error(`[REPLICA] !!!! Error in TCP self-connection:`, error);
         }
       } catch (error) {
         console.error("[DEBUG] Error parsing buffer:", error);

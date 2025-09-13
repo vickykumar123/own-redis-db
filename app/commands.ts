@@ -152,6 +152,7 @@ export class RedisCommands {
       !response.startsWith("-") &&
       !this.replicationManager.isReplica()
     ) {
+      console.log(`[MASTER] Propagating command to replicas: ${command} ${args.join(' ')}`);
       this.replicationManager.propagateCommand(command, args);
     }
 
@@ -350,6 +351,7 @@ export class RedisCommands {
         this.sendEmptyRDBFile(socket);
 
         // Register this connection as a replica
+        console.log(`[MASTER] <<<< PSYNC: Adding replica connection from ${socket.remoteAddress}:${socket.remotePort}`);
         this.replicationManager.addReplicaConnection(socket);
 
         return undefined; // Don't return response since we already wrote to socket
