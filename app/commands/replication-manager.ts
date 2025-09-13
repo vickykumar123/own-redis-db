@@ -222,81 +222,69 @@ export class ReplicationManager {
     console.log("Sending PSYNC command to master");
 
     return new Promise((resolve, reject) => {
+      let handshakeComplete = false;
+      
       // Set up special handler for PSYNC response and RDB file
       const psyncHandler = (data: Buffer) => {
+        if (handshakeComplete) return; // Ignore if already processed
+        
         console.log(`[DEBUG] PSYNC response received: ${data.length} bytes`);
-        console.log(`[DEBUG] PSYNC data hex:`, data.toString('hex'));
-        console.log(`[DEBUG] PSYNC data string:`, JSON.stringify(data.toString()));
         
         // Append to buffer for processing
         this.buffer = Buffer.concat([this.buffer, data]);
         
         const bufferStr = this.buffer.toString();
+        console.log(`[DEBUG] Buffer string:`, JSON.stringify(bufferStr.substring(0, 100)));
         
-        // Check for FULLRESYNC response
+        // Check for FULLRESYNC response and process RDB
         if (bufferStr.includes("FULLRESYNC")) {
           console.log("PSYNC FULLRESYNC response detected");
           
           // Find the end of the FULLRESYNC line
           const fullresyncEndIndex = this.buffer.indexOf("\r\n");
-          if (fullresyncEndIndex === -1) {
-            console.log("[DEBUG] Waiting for complete FULLRESYNC line");
-            return; // Wait for complete line
-          }
+          if (fullresyncEndIndex === -1) return; // Wait for complete line
           
           // Skip past the FULLRESYNC line
           this.buffer = this.buffer.subarray(fullresyncEndIndex + 2);
-          console.log(`[DEBUG] After FULLRESYNC line, buffer length: ${this.buffer.length}`);
-          console.log(`[DEBUG] After FULLRESYNC line, buffer hex:`, this.buffer.toString('hex'));
           
-          // Continue processing to handle any additional data in this same packet
-          // Don't remove the handler yet - let it process RDB and subsequent commands
-        }
-        
-        // Process RDB file if we have one in the buffer
-        if (this.buffer.length > 0 && this.buffer[0] === 36) { // '$'
-          const rdbLengthEndIndex = this.buffer.indexOf("\r\n");
-          if (rdbLengthEndIndex === -1) {
-            console.log("[DEBUG] Waiting for RDB length");
-            return; // Wait for complete RDB length
-          }
-          
-          const rdbLengthStr = this.buffer.subarray(1, rdbLengthEndIndex).toString();
-          const rdbLength = parseInt(rdbLengthStr, 10);
-          console.log(`[DEBUG] RDB file length: ${rdbLength}`);
-          
-          // Check if we have the complete RDB file
-          const rdbDataStart = rdbLengthEndIndex + 2;
-          const rdbDataEnd = rdbDataStart + rdbLength;
-          
-          if (this.buffer.length < rdbDataEnd) {
-            console.log(`[DEBUG] Waiting for complete RDB file: have ${this.buffer.length}, need ${rdbDataEnd}`);
-            return; // Wait for complete RDB file
-          }
-          
-          // Skip past the RDB file data (no trailing \r\n after RDB data)
-          this.buffer = this.buffer.subarray(rdbDataEnd);
-          console.log(`[DEBUG] RDB file parsed successfully, remaining buffer: ${this.buffer.length} bytes`);
-          console.log(`[DEBUG] Remaining buffer hex:`, this.buffer.toString('hex'));
-          
-          // If we processed FULLRESYNC and RDB, we're ready for commands
-          if (bufferStr.includes("FULLRESYNC")) {
-            // Remove the PSYNC handler and resolve
-            if (this.masterConnection) {
-              this.masterConnection.off('data', psyncHandler);
-            }
-            console.log("PSYNC command sent successfully");
+          // Process RDB file if present
+          if (this.buffer.length > 0 && this.buffer[0] === 36) { // '$'
+            const rdbLengthEndIndex = this.buffer.indexOf("\r\n");
+            if (rdbLengthEndIndex === -1) return; // Wait for complete RDB length line
             
-            // Process any remaining data (like GETACK commands) in the buffer
-            // We need to do this BEFORE resolving so the propagation listener can be set up
-            if (this.buffer.length > 0) {
-              console.log("[DEBUG] Processing remaining buffer data after RDB");
-              // Temporarily handle the remaining buffer data
-              this.processRemainingBuffer();
+            const rdbLengthStr = this.buffer.subarray(1, rdbLengthEndIndex).toString();
+            const rdbLength = parseInt(rdbLengthStr, 10);
+            console.log(`[DEBUG] RDB file length: ${rdbLength}`);
+            
+            // Check if we have the complete RDB file
+            const rdbDataStart = rdbLengthEndIndex + 2;
+            const rdbDataEnd = rdbDataStart + rdbLength;
+            
+            if (this.buffer.length < rdbDataEnd) {
+              console.log(`[DEBUG] Waiting for complete RDB file`);
+              return; // Wait for complete RDB file
             }
             
-            resolve();
+            // Skip past the RDB file data
+            this.buffer = this.buffer.subarray(rdbDataEnd);
+            console.log(`[DEBUG] RDB file processed, remaining buffer: ${this.buffer.length} bytes`);
+            console.log(`[DEBUG] Remaining buffer hex:`, this.buffer.toString('hex'));
           }
+          
+          // Mark handshake as complete and remove this handler
+          handshakeComplete = true;
+          if (this.masterConnection) {
+            this.masterConnection.off('data', psyncHandler);
+          }
+          console.log("PSYNC handshake completed");
+          
+          // Process any remaining commands in the buffer immediately
+          if (this.buffer.length > 0) {
+            console.log("[DEBUG] Processing remaining buffer after PSYNC");
+            this.handleBuffer();
+          }
+          
+          resolve();
         }
       };
       
@@ -314,10 +302,12 @@ export class ReplicationManager {
       
       // Set timeout for PSYNC response
       setTimeout(() => {
-        if (this.masterConnection) {
+        if (this.masterConnection && !handshakeComplete) {
           this.masterConnection.off('data', psyncHandler);
         }
-        reject(new Error("PSYNC command timed out"));
+        if (!handshakeComplete) {
+          reject(new Error("PSYNC command timed out"));
+        }
       }, 5000);
     });
   }
@@ -329,68 +319,6 @@ export class ReplicationManager {
     }
   }
 
-  private processRemainingBuffer(): void {
-    console.log("[DEBUG] Processing remaining buffer from PSYNC");
-    // Use the same logic as handleBuffer but just for the immediate processing
-    while (this.buffer.length > 0) {
-      try {
-        const parsedCommand = parseRESPCommand(this.buffer);
-        
-        if (!parsedCommand) {
-          console.log("[DEBUG] Incomplete command in remaining buffer");
-          break;
-        }
-        
-        const {command, args} = parsedCommand;
-        console.log(`[DEBUG] Processing remaining command: ${command} ${args.join(" ")}`);
-        
-        const commandBytes = this.calculateCommandBytes(command, args);
-        this.buffer = this.buffer.subarray(commandBytes);
-        
-        // Handle REPLCONF GETACK command directly
-        if (
-          command.toUpperCase() === "REPLCONF" &&
-          args.length >= 2 &&
-          args[0].toUpperCase() === "GETACK"
-        ) {
-          console.log("[DEBUG] *** PROCESSING GETACK FROM REMAINING BUFFER ***");
-          const currentOffset = this.replicationOffset;
-          const ackResponse = encodeArray(["REPLCONF", "ACK", currentOffset.toString()]);
-          console.log(`[DEBUG] Sending ACK response with offset ${currentOffset}`);
-          
-          if (this.masterConnection) {
-            this.masterConnection.write(ackResponse);
-          }
-          
-          this.replicationOffset += commandBytes;
-          console.log(`[DEBUG] Updated offset to ${this.replicationOffset} after GETACK`);
-          continue;
-        }
-        
-        // For other commands, update offset and forward
-        this.replicationOffset += commandBytes;
-        console.log(`[DEBUG] Updated offset to ${this.replicationOffset} after ${command}`);
-        
-        const respCommand = encodeRESPCommand(command, args);
-        const client = net.createConnection(
-          {port: this.config.port || 6379, host: "127.0.0.1"},
-          () => {
-            client.write(respCommand);
-            client.end();
-          }
-        );
-        
-        client.on("error", (error) => {
-          console.error("[DEBUG] Error in remaining buffer processing:", error);
-        });
-        
-      } catch (error) {
-        console.error("[DEBUG] Error processing remaining buffer:", error);
-        this.buffer = Buffer.alloc(0);
-        break;
-      }
-    }
-  }
 
   // ========== SHARED CONFIGURATION METHODS ==========
 
