@@ -475,16 +475,27 @@ export class RedisCommands {
       return encodeError("ERR negative number of replicas");
     }
 
+    console.log(`[DEBUG] WAIT command: requesting ${numReplicas} replicas, timeout ${timeout}ms`);
+
+    // If no replicas are needed, return immediately
+    if (numReplicas === 0) {
+      return encodeInteger(0);
+    }
+
     // Get the current number of connected replicas
     const connectedReplicas = this.replicationManager.getReplicaCount();
+    console.log(`[DEBUG] Currently have ${connectedReplicas} connected replicas`);
+
+    // If no replicas are connected, return 0 immediately
+    if (connectedReplicas === 0) {
+      return encodeInteger(0);
+    }
+
+    // Delegate to replication manager to handle the actual WAIT logic
+    const acknowledgedReplicas = await this.replicationManager.waitForReplicas(numReplicas, timeout);
     
-    console.log(`[DEBUG] WAIT command: requesting ${numReplicas}, have ${connectedReplicas} replicas`);
-    
-    // According to the requirements:
-    // "Even if WAIT is called with a number lesser than the number of connected replicas, 
-    // the master should return the count of connected replicas."
-    // So we always return the actual count of connected replicas
-    return encodeInteger(connectedReplicas);
+    console.log(`[DEBUG] WAIT completed: ${acknowledgedReplicas} replicas acknowledged`);
+    return encodeInteger(acknowledgedReplicas);
   }
 
   // For testing or debugging
