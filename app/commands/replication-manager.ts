@@ -48,7 +48,7 @@ export class ReplicationManager {
       await this.sendPsyncCommand();
 
       // Stage 4: Start listening for propagated commands from master
-      // this.setupPropagationListener();
+      this.setupPropagationListener();
 
       console.log("Replication handshake completed successfully");
     } catch (error) {

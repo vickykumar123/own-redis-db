@@ -273,6 +273,7 @@ export class RedisCommands {
 
   private handleReplConf(args: string[]): string {
     // Handle GETACK command - format: REPLCONF GETACK *
+    console.log(`[DEBUG] Handling REPLCONF with args: ${args.join(" ")}`);
     if (
       args.length === 2 &&
       args[0].toLowerCase() === "getack" &&
