@@ -1,4 +1,9 @@
-import {encodeBulkString, encodeSimpleString, encodeError} from "./parser";
+import {
+  encodeBulkString,
+  encodeSimpleString,
+  encodeError,
+  encodeArray,
+} from "./parser";
 import * as net from "net";
 import {StringCommands} from "./commands/string-commands";
 import {ListCommands} from "./commands/list-commands";
@@ -56,7 +61,11 @@ export class RedisCommands {
     args: string[],
     socket: net.Socket
   ): Promise<any> {
-    console.log(`[DEBUG] Executing command: ${command} ${args.join(' ')} (isReplica: ${this.replicationManager.isReplica()})`);
+    console.log(
+      `[DEBUG] Executing command: ${command} ${args.join(
+        " "
+      )} (isReplica: ${this.replicationManager.isReplica()})`
+    );
     let response: string | undefined;
 
     if (this.shouldQueue(command, socket)) {
@@ -146,7 +155,7 @@ export class RedisCommands {
     if (this.replicationManager.isReplica() && this.isWriteCommand(command)) {
       return undefined;
     }
-    
+
     return response;
   }
 
@@ -263,12 +272,26 @@ export class RedisCommands {
   }
 
   private handleReplConf(args: string[]): string {
-    // Basic validation
+    // Handle GETACK command - format: REPLCONF GETACK *
+    if (
+      args.length === 2 &&
+      args[0].toLowerCase() === "getack" &&
+      args[1] === "*"
+    ) {
+      // Respond with REPLCONF ACK <offset>
+      // For now, hardcode offset to 0 as per requirements
+      const offset = 0;
+      return encodeArray(["REPLCONF", "ACK", offset.toString()]);
+    }
+
+    // Handle other REPLCONF commands (listening-port, capa, etc.)
+    // Basic validation for key-value pairs
     if (args.length < 2 || args.length % 2 !== 0) {
       return encodeError(
         "ERR wrong number of arguments for 'replconf' command"
       );
     }
+
     for (let i = 0; i < args.length; i += 2) {
       const option = args[i].toLowerCase();
       const value = args[i + 1];
