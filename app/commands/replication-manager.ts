@@ -286,13 +286,16 @@ export class ReplicationManager {
               this.masterConnection.off('data', psyncHandler);
             }
             console.log("PSYNC command sent successfully");
-            resolve();
             
             // Process any remaining data (like GETACK commands) in the buffer
+            // We need to do this BEFORE resolving so the propagation listener can be set up
             if (this.buffer.length > 0) {
               console.log("[DEBUG] Processing remaining buffer data after RDB");
-              this.handleBuffer();
+              // Temporarily handle the remaining buffer data
+              this.processRemainingBuffer();
             }
+            
+            resolve();
           }
         }
       };
@@ -323,6 +326,69 @@ export class ReplicationManager {
     if (this.masterConnection) {
       this.masterConnection.destroy();
       this.masterConnection = null;
+    }
+  }
+
+  private processRemainingBuffer(): void {
+    console.log("[DEBUG] Processing remaining buffer from PSYNC");
+    // Use the same logic as handleBuffer but just for the immediate processing
+    while (this.buffer.length > 0) {
+      try {
+        const parsedCommand = parseRESPCommand(this.buffer);
+        
+        if (!parsedCommand) {
+          console.log("[DEBUG] Incomplete command in remaining buffer");
+          break;
+        }
+        
+        const {command, args} = parsedCommand;
+        console.log(`[DEBUG] Processing remaining command: ${command} ${args.join(" ")}`);
+        
+        const commandBytes = this.calculateCommandBytes(command, args);
+        this.buffer = this.buffer.subarray(commandBytes);
+        
+        // Handle REPLCONF GETACK command directly
+        if (
+          command.toUpperCase() === "REPLCONF" &&
+          args.length >= 2 &&
+          args[0].toUpperCase() === "GETACK"
+        ) {
+          console.log("[DEBUG] *** PROCESSING GETACK FROM REMAINING BUFFER ***");
+          const currentOffset = this.replicationOffset;
+          const ackResponse = encodeArray(["REPLCONF", "ACK", currentOffset.toString()]);
+          console.log(`[DEBUG] Sending ACK response with offset ${currentOffset}`);
+          
+          if (this.masterConnection) {
+            this.masterConnection.write(ackResponse);
+          }
+          
+          this.replicationOffset += commandBytes;
+          console.log(`[DEBUG] Updated offset to ${this.replicationOffset} after GETACK`);
+          continue;
+        }
+        
+        // For other commands, update offset and forward
+        this.replicationOffset += commandBytes;
+        console.log(`[DEBUG] Updated offset to ${this.replicationOffset} after ${command}`);
+        
+        const respCommand = encodeRESPCommand(command, args);
+        const client = net.createConnection(
+          {port: this.config.port || 6379, host: "127.0.0.1"},
+          () => {
+            client.write(respCommand);
+            client.end();
+          }
+        );
+        
+        client.on("error", (error) => {
+          console.error("[DEBUG] Error in remaining buffer processing:", error);
+        });
+        
+      } catch (error) {
+        console.error("[DEBUG] Error processing remaining buffer:", error);
+        this.buffer = Buffer.alloc(0);
+        break;
+      }
     }
   }
 
