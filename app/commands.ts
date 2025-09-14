@@ -6,6 +6,8 @@ import {
   encodeInteger,
 } from "./parser";
 import * as net from "net";
+import * as path from "path";
+import { parseRDBFile } from "./rdb-parser";
 import {StringCommands} from "./commands/string-commands";
 import {ListCommands} from "./commands/list-commands";
 import {StreamCommands} from "./commands/stream-commands";
@@ -16,7 +18,7 @@ import {type ServerConfig, DEFAULT_SERVER_CONFIG} from "./config/server-config";
 export interface KeyValueEntry {
   value: any;
   expiry?: number; // Timestamp when key expires (Date.now() + px)
-  type?: "string" | "list" | "stream"; // Optional type field
+  type?: "string" | "list" | "stream" | "hash" | "set" | "zset"; // Optional type field
 }
 
 // Stream entry interface
@@ -54,6 +56,11 @@ export class RedisCommands {
     this.streamCommands = new StreamCommands(this.kvStore);
     this.rdbDir = rdbDir;
     this.rdbFilename = rdbFilename;
+
+    // Load RDB file if specified
+    if (rdbDir && rdbFilename) {
+      this.loadRDBFile(rdbDir, rdbFilename);
+    }
 
     // Pass a command executor to ReplicationManager so replicas can execute commands locally
     const commandExecutor = async (command: string, args: string[]) => {
@@ -162,6 +169,9 @@ export class RedisCommands {
         break;
       case "CONFIG":
         response = this.handleConfig(args);
+        break;
+      case "KEYS":
+        response = this.handleKeys(args);
         break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
@@ -414,6 +424,53 @@ export class RedisCommands {
     return encodeError(`ERR unknown CONFIG subcommand '${subcommand}'`);
   }
 
+  private handleKeys(args: string[]): string {
+    if (args.length !== 1) {
+      return encodeError("ERR wrong number of arguments for 'keys' command");
+    }
+
+    const pattern = args[0];
+    const matchingKeys: string[] = [];
+
+    for (const [key] of this.kvStore) {
+      if (this.matchesPattern(key, pattern)) {
+        matchingKeys.push(key);
+      }
+    }
+
+    return encodeArray(matchingKeys);
+  }
+
+  private matchesPattern(key: string, pattern: string): boolean {
+    // Convert Redis glob pattern to regex
+    // * matches any sequence of characters
+    // ? matches any single character
+    // [abc] matches any character in the set
+    // [a-z] matches any character in the range
+    // \x matches x literally (escape special characters)
+
+    if (pattern === "*") {
+      return true; // Match everything
+    }
+
+    // Escape regex special characters except our glob characters
+    let regexPattern = pattern
+      .replace(/[.+^${}()|[\]\\]/g, '\\$&') // Escape regex specials
+      .replace(/\\\*/g, '.*')              // * becomes .*
+      .replace(/\\\?/g, '.');              // ? becomes .
+
+    // Add anchors to match entire string
+    regexPattern = '^' + regexPattern + '$';
+
+    try {
+      const regex = new RegExp(regexPattern);
+      return regex.test(key);
+    } catch (error) {
+      // If pattern is invalid, return false
+      return false;
+    }
+  }
+
   private sendEmptyRDBFile(socket: net.Socket): void {
     // Empty RDB file hex representation
     const emptyRDBHex =
@@ -564,6 +621,29 @@ export class RedisCommands {
       `[DEBUG] WAIT completed: ${acknowledgedReplicas} replicas acknowledged`
     );
     return encodeInteger(acknowledgedReplicas);
+  }
+
+  // ========== RDB LOADING ==========
+  private loadRDBFile(dir: string, filename: string): void {
+    const filePath = path.join(dir, filename);
+    const rdbKeys = parseRDBFile(filePath);
+
+    for (const rdbKey of rdbKeys) {
+      const now = Date.now();
+
+      // Skip expired keys
+      if (rdbKey.expiry && rdbKey.expiry <= now) {
+        continue;
+      }
+
+      this.kvStore.set(rdbKey.key, {
+        value: rdbKey.value,
+        expiry: rdbKey.expiry,
+        type: rdbKey.type
+      });
+    }
+
+    console.log(`Loaded ${rdbKeys.length} keys from RDB file`);
   }
 
   // For testing or debugging
