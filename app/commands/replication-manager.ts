@@ -1,6 +1,11 @@
 import * as net from "net";
 import {type ServerConfig} from "../config/server-config";
-import {encodeRESPCommand, parseRESPCommand, encodeArray, encodeSimpleString} from "../parser";
+import {
+  encodeRESPCommand,
+  parseRESPCommand,
+  encodeArray,
+  encodeSimpleString,
+} from "../parser";
 
 interface ReplicaInfo {
   socket: net.Socket;
@@ -14,13 +19,16 @@ export class ReplicationManager {
   private masterConnection: net.Socket | null = null;
   private buffer: Buffer = Buffer.alloc(0);
   private replicationOffset: number = 0; // Track bytes processed from master
-  // Master-specific properties  
+  // Master-specific properties
   private replicaConnections: ReplicaInfo[] = [];
   // WAIT command tracking
   private pendingCommands: number = 0; // Commands sent but not ACKed
   private ackCount: number = 0; // ACKs received from replicas
 
-  constructor(config: ServerConfig, private commandExecutor?: (command: string, args: string[]) => Promise<any>) {
+  constructor(
+    config: ServerConfig,
+    private commandExecutor?: (command: string, args: string[]) => Promise<any>
+  ) {
     this.config = config;
   }
 
@@ -226,72 +234,80 @@ export class ReplicationManager {
 
     return new Promise((resolve, reject) => {
       let handshakeComplete = false;
-      
+
       // Set up special handler for PSYNC response and RDB file
       const psyncHandler = async (data: Buffer) => {
         if (handshakeComplete) return; // Ignore if already processed
-        
-          // Append to buffer for processing
+
+        // Append to buffer for processing
         this.buffer = Buffer.concat([this.buffer, data]);
-        
+
         const bufferStr = this.buffer.toString();
-        
+
         // Check for FULLRESYNC response and process RDB
         if (bufferStr.includes("FULLRESYNC")) {
           console.log("PSYNC FULLRESYNC response detected");
-          
+
           // Find the end of the FULLRESYNC line
           const fullresyncEndIndex = this.buffer.indexOf("\r\n");
           if (fullresyncEndIndex === -1) return; // Wait for complete line
-          
+
           // Skip past the FULLRESYNC line
           this.buffer = this.buffer.subarray(fullresyncEndIndex + 2);
-          
+
           // Process RDB file if present
-          if (this.buffer.length > 0 && this.buffer[0] === 36) { // '$'
+          if (this.buffer.length > 0 && this.buffer[0] === 36) {
+            // '$'
             const rdbLengthEndIndex = this.buffer.indexOf("\r\n");
             if (rdbLengthEndIndex === -1) return; // Wait for complete RDB length line
-            
-            const rdbLengthStr = this.buffer.subarray(1, rdbLengthEndIndex).toString();
+
+            const rdbLengthStr = this.buffer
+              .subarray(1, rdbLengthEndIndex)
+              .toString();
             const rdbLength = parseInt(rdbLengthStr, 10);
             console.log(`[DEBUG] RDB file length: ${rdbLength}`);
-            
+
             // Check if we have the complete RDB file
             const rdbDataStart = rdbLengthEndIndex + 2;
             const rdbDataEnd = rdbDataStart + rdbLength;
-            
+
             if (this.buffer.length < rdbDataEnd) {
               console.log(`[DEBUG] Waiting for complete RDB file`);
               return; // Wait for complete RDB file
             }
-            
+
             // Skip past the RDB file data
             this.buffer = this.buffer.subarray(rdbDataEnd);
-            console.log(`[DEBUG] RDB file processed, remaining buffer: ${this.buffer.length} bytes`);
-            console.log(`[DEBUG] Remaining buffer hex:`, this.buffer.toString('hex'));
+            console.log(
+              `[DEBUG] RDB file processed, remaining buffer: ${this.buffer.length} bytes`
+            );
+            console.log(
+              `[DEBUG] Remaining buffer hex:`,
+              this.buffer.toString("hex")
+            );
           }
-          
+
           // Mark handshake as complete and remove this handler
           handshakeComplete = true;
           if (this.masterConnection) {
-            this.masterConnection.off('data', psyncHandler);
+            this.masterConnection.off("data", psyncHandler);
           }
           console.log("PSYNC handshake completed");
-          
+
           // Process any remaining commands in the buffer immediately
           if (this.buffer.length > 0) {
             console.log("[DEBUG] Processing remaining buffer after PSYNC");
             await this.handleBuffer();
           }
-          
+
           resolve();
         }
       };
-      
+
       // Attach the PSYNC handler
       if (this.masterConnection) {
-        this.masterConnection.on('data', psyncHandler);
-        
+        this.masterConnection.on("data", psyncHandler);
+
         // Send PSYNC command
         const respCommand = encodeRESPCommand("PSYNC", ["?", "-1"]);
         this.masterConnection.write(respCommand);
@@ -299,11 +315,11 @@ export class ReplicationManager {
         reject(new Error("No connection to master"));
         return;
       }
-      
+
       // Set timeout for PSYNC response
       setTimeout(() => {
         if (this.masterConnection && !handshakeComplete) {
-          this.masterConnection.off('data', psyncHandler);
+          this.masterConnection.off("data", psyncHandler);
         }
         if (!handshakeComplete) {
           reject(new Error("PSYNC command timed out"));
@@ -318,7 +334,6 @@ export class ReplicationManager {
       this.masterConnection = null;
     }
   }
-
 
   // ========== SHARED CONFIGURATION METHODS ==========
 
@@ -350,7 +365,7 @@ export class ReplicationManager {
   }
 
   // ========== SHARED METHODS ==========
-  
+
   // Check if a socket is a replica connection
   isReplicaSocket(socket: net.Socket): boolean {
     return this.replicaConnections.some((replica) => replica.socket === socket);
@@ -403,19 +418,27 @@ export class ReplicationManager {
     }
 
     const respCommand = encodeRESPCommand(command, args);
-    console.log(`[MASTER] Sending to ${this.replicaConnections.length} replicas: ${command} ${args.join(" ")}`);
+    console.log(
+      `[MASTER] Sending to ${
+        this.replicaConnections.length
+      } replicas: ${command} ${args.join(" ")}`
+    );
     console.log(`[MASTER] Encoded command:`, JSON.stringify(respCommand));
-    
+
     // Debug: Show which sockets we're sending to
     this.replicaConnections.forEach((replica, index) => {
-      console.log(`[MASTER] Replica ${index}: ${replica.socket.remoteAddress}:${replica.socket.remotePort}`);
+      console.log(
+        `[MASTER] Replica ${index}: ${replica.socket.remoteAddress}:${replica.socket.remotePort}`
+      );
     });
 
     // Track pending commands for write commands (but not REPLCONF GETACK)
     const isWriteCommand = command.toUpperCase() !== "REPLCONF";
     if (isWriteCommand) {
       this.pendingCommands++;
-      console.log(`[DEBUG] Incremented pending commands to ${this.pendingCommands}`);
+      console.log(
+        `[DEBUG] Incremented pending commands to ${this.pendingCommands}`
+      );
     }
 
     // Send to all connected replicas over their replication connections
@@ -438,7 +461,9 @@ export class ReplicationManager {
   handleAck(): void {
     this.ackCount++;
     this.pendingCommands--;
-    console.log(`[DEBUG] Received ACK: ackCount=${this.ackCount}, pendingCommands=${this.pendingCommands}`);
+    console.log(
+      `[DEBUG] Received ACK: ackCount=${this.ackCount}, pendingCommands=${this.pendingCommands}`
+    );
   }
 
   // Get current pending commands count
@@ -447,39 +472,50 @@ export class ReplicationManager {
   }
 
   // ========== WAIT COMMAND IMPLEMENTATION ==========
-  async waitForReplicas(numReplicas: number, timeoutMs: number): Promise<number> {
-    console.log(`[DEBUG] waitForReplicas: need ${numReplicas}, timeout ${timeoutMs}ms, pending=${this.pendingCommands}`);
-    
+  async waitForReplicas(
+    numReplicas: number,
+    timeoutMs: number
+  ): Promise<number> {
+    console.log(
+      `[DEBUG] waitForReplicas: need ${numReplicas}, timeout ${timeoutMs}ms, pending=${this.pendingCommands}`
+    );
+
     const connectedReplicas = this.replicaConnections.length;
-    
+
     // If no replicas connected, return 0
     if (connectedReplicas === 0) {
       return 0;
     }
-    
+
     // If no pending commands, return replica count immediately
     if (this.pendingCommands === 0) {
-      console.log(`[DEBUG] No pending commands, returning ${connectedReplicas} immediately`);
+      console.log(
+        `[DEBUG] No pending commands, returning ${connectedReplicas} immediately`
+      );
       return connectedReplicas;
     }
-    
+
     // Reset ACK count for this WAIT command
     this.ackCount = 0;
-    
+
     // Send GETACK to all replicas
     console.log(`[DEBUG] Sending GETACK to ${connectedReplicas} replicas`);
     this.propagateCommand("REPLCONF", ["GETACK", "*"]);
-    
+
     // Wait for ACKs or timeout using interval-based approach like Redis-clone
     return new Promise((resolve) => {
       const checkInterval = 100; // Check every 100ms like Redis-clone
       let remainingTimeout = timeoutMs;
-      
+
       const intervalId = setInterval(() => {
         // Check if we have enough ACKs or timeout reached
         if (this.ackCount >= numReplicas || remainingTimeout <= 0) {
           clearInterval(intervalId);
-          console.log(`[DEBUG] WAIT completed: ackCount=${this.ackCount}, timeout=${remainingTimeout <= 0}`);
+          console.log(
+            `[DEBUG] WAIT completed: ackCount=${this.ackCount}, timeout=${
+              remainingTimeout <= 0
+            }`
+          );
           const result = this.ackCount;
           this.ackCount = 0; // Reset for next WAIT command
           resolve(result);
@@ -489,60 +525,11 @@ export class ReplicationManager {
     });
   }
 
-  handlePsync(args: string[], socket?: net.Socket): string | undefined {
-    if (args.length !== 2) {
-      return encodeSimpleString("ERR wrong number of arguments for 'psync' command");
-    }
-
-    const replicaId = args[0];
-    const offset = args[1];
-
-    if (replicaId === "?" && offset === "-1") {
-      const replicaInfo = this.getMasterReplicationInfo();
-      const masterReplId = replicaInfo.master_replid || "unknown";
-      const masterReplOffset = replicaInfo.master_repl_offset || 0;
-
-      // Send FULLRESYNC response first
-      const fullresyncResponse = encodeSimpleString(
-        `FULLRESYNC ${masterReplId} ${masterReplOffset}`
-      );
-
-      // Send empty RDB file after FULLRESYNC response
-      if (socket) {
-        // Send FULLRESYNC first
-        socket.write(fullresyncResponse);
-
-        // Then send empty RDB file
-        this.sendEmptyRDBFile(socket);
-
-        // Register this connection as a replica
-        this.addReplicaConnection(socket);
-
-        return undefined; // Don't return response since we already wrote to socket
-      }
-
-      return fullresyncResponse;
-    }
-    return encodeSimpleString("ERR PSYNC not fully implemented");
-  }
-
-  private sendEmptyRDBFile(socket: net.Socket): void {
-    // Empty RDB file hex representation
-    const emptyRDBHex =
-      "524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2";
-
-    // Convert hex to binary
-    const rdbData = Buffer.from(emptyRDBHex, "hex");
-
-    // Send RDB file in the format: $<length>\r\n<binary_contents>
-    const rdbResponse = `$${rdbData.length}\r\n`;
-    socket.write(rdbResponse);
-    socket.write(rdbData);
-  }
-
   private setupPropagationListener(): void {
     if (!this.masterConnection) {
-      console.error("[REPLICA] Cannot setup propagation listener: no master connection");
+      console.error(
+        "[REPLICA] Cannot setup propagation listener: no master connection"
+      );
       return;
     }
 
@@ -561,32 +548,39 @@ export class ReplicationManager {
 
   private async handleBuffer(): Promise<void> {
     // First, check if we need to skip RDB file data
-    if (this.buffer.length > 0 && this.buffer[0] === 36) { // '$' - RDB file marker
+    if (this.buffer.length > 0 && this.buffer[0] === 36) {
+      // '$' - RDB file marker
       console.log("[DEBUG] Detected RDB file in buffer, parsing...");
-      
+
       const rdbLengthEndIndex = this.buffer.indexOf("\r\n");
       if (rdbLengthEndIndex === -1) {
         console.log("[DEBUG] Waiting for complete RDB length line");
         return; // Wait for complete RDB length line
       }
-      
-      const rdbLengthStr = this.buffer.subarray(1, rdbLengthEndIndex).toString();
+
+      const rdbLengthStr = this.buffer
+        .subarray(1, rdbLengthEndIndex)
+        .toString();
       const rdbLength = parseInt(rdbLengthStr, 10);
       console.log(`[DEBUG] RDB file length: ${rdbLength}`);
-      
+
       // Check if we have the complete RDB file
       const rdbDataStart = rdbLengthEndIndex + 2;
       const rdbDataEnd = rdbDataStart + rdbLength;
-      
+
       if (this.buffer.length < rdbDataEnd) {
-        console.log(`[DEBUG] Waiting for complete RDB file: have ${this.buffer.length}, need ${rdbDataEnd}`);
+        console.log(
+          `[DEBUG] Waiting for complete RDB file: have ${this.buffer.length}, need ${rdbDataEnd}`
+        );
         return; // Wait for complete RDB file
       }
-      
+
       // Skip past the RDB file data
       this.buffer = this.buffer.subarray(rdbDataEnd);
-      console.log(`[DEBUG] RDB file skipped, remaining buffer: ${this.buffer.length} bytes`);
-      console.log(`[DEBUG] Remaining buffer hex:`, this.buffer.toString('hex'));
+      console.log(
+        `[DEBUG] RDB file skipped, remaining buffer: ${this.buffer.length} bytes`
+      );
+      console.log(`[DEBUG] Remaining buffer hex:`, this.buffer.toString("hex"));
     }
 
     // Process all complete commands in the buffer
@@ -621,7 +615,11 @@ export class ReplicationManager {
           );
           // Respond with current offset (BEFORE processing this GETACK)
           const currentOffset = this.replicationOffset;
-          const ackResponse = encodeArray(["REPLCONF", "ACK", currentOffset.toString()]);
+          const ackResponse = encodeArray([
+            "REPLCONF",
+            "ACK",
+            currentOffset.toString(),
+          ]);
           console.log(
             `[DEBUG] Sending ACK response with offset ${currentOffset}:`,
             JSON.stringify(ackResponse)
@@ -630,31 +628,46 @@ export class ReplicationManager {
             this.masterConnection.write(ackResponse);
           }
           console.log("[DEBUG] *** ACK response sent to master ***");
-          
+
           // NOW update offset to include this GETACK command
           this.replicationOffset += commandBytes;
-          console.log(`[DEBUG] Updated offset to ${this.replicationOffset} after processing GETACK`);
+          console.log(
+            `[DEBUG] Updated offset to ${this.replicationOffset} after processing GETACK`
+          );
           continue;
         }
 
         // For other commands (PING, SET, etc.), process and update offset
-        console.log(`[DEBUG] Processing command: ${command} ${args.join(' ')}`);
-        
+        console.log(`[DEBUG] Processing command: ${command} ${args.join(" ")}`);
+
         // Update offset for all commands (including PING)
         this.replicationOffset += commandBytes;
-        console.log(`[DEBUG] Updated offset to ${this.replicationOffset} after processing ${command}`);
-        
+        console.log(
+          `[DEBUG] Updated offset to ${this.replicationOffset} after processing ${command}`
+        );
+
         // Execute the command on the replica if we have a command executor
         if (this.commandExecutor) {
           try {
-            console.log(`[REPLICA] Executing command locally: ${command} ${args.join(' ')}`);
+            console.log(
+              `[REPLICA] Executing command locally: ${command} ${args.join(
+                " "
+              )}`
+            );
             await this.commandExecutor(command, args);
             console.log(`[REPLICA] Command executed successfully: ${command}`);
           } catch (error) {
-            console.error(`[REPLICA] Error executing command ${command}:`, error);
+            console.error(
+              `[REPLICA] Error executing command ${command}:`,
+              error
+            );
           }
         } else {
-          console.log(`[REPLICA] Command received: ${command} ${args.join(' ')} - no executor available`);
+          console.log(
+            `[REPLICA] Command received: ${command} ${args.join(
+              " "
+            )} - no executor available`
+          );
         }
       } catch (error) {
         console.error("[DEBUG] Error parsing buffer:", error);
