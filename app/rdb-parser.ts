@@ -8,130 +8,180 @@ export interface RDBKey {
 }
 
 export class RDBParser {
-  private buffer: Buffer;
-  private position: number = 0;
+  private data: Uint8Array;
+  private index: number = 0;
+  private entries: Map<string, RDBKey> = new Map();
 
   constructor(buffer: Buffer) {
-    this.buffer = buffer;
+    this.data = new Uint8Array(buffer);
   }
 
-  // Read size-encoded value
-  private readSize(): number {
-    const byte = this.buffer[this.position++];
-    const firstTwoBits = (byte & 0xC0) >> 6; // Get first 2 bits
-
-    if (firstTwoBits === 0b00) {
-      // 6-bit length
-      return byte & 0x3F;
-    } else if (firstTwoBits === 0b01) {
-      // 14-bit length (big-endian)
-      const nextByte = this.buffer[this.position++];
-      return ((byte & 0x3F) << 8) | nextByte;
-    } else if (firstTwoBits === 0b10) {
-      // 32-bit length (big-endian)
-      const length = this.buffer.readUInt32BE(this.position);
-      this.position += 4;
-      return length;
-    } else {
-      // Special encoding (0b11) - not used for size
-      throw new Error("Special encoding not expected for size");
+  // Read encoded integer (handles special encodings)
+  private readEncodedInt(): number {
+    let length = 0;
+    const type = this.data[this.index] >> 6;
+    switch (type) {
+      case 0:
+        length = this.data[this.index++] & 0b00111111;
+        break;
+      case 1:
+        length =
+          (this.data[this.index++] & 0b00111111) |
+          (this.data[this.index++] << 6);
+        break;
+      case 2:
+        this.index++;
+        length =
+          this.data[this.index++] |
+          (this.data[this.index++] << 8) |
+          (this.data[this.index++] << 16) |
+          (this.data[this.index++] << 24);
+        break;
+      case 3: {
+        const bitType = this.data[this.index++] & 0b00111111;
+        length = this.data[this.index++];
+        if (bitType > 0) {
+          length |= this.data[this.index++] << 8;
+        }
+        if (bitType == 2) {
+          length |=
+            (this.data[this.index++] << 16) | (this.data[this.index++] << 24);
+        }
+        if (bitType > 2) {
+          throw Error("length not implemented");
+        }
+        break;
+      }
     }
+    return length;
   }
 
-  // Read string-encoded value
-  private readString(): string {
-    const size = this.readSize();
-    const str = this.buffer.subarray(this.position, this.position + size).toString();
-    this.position += size;
+  // Read encoded string
+  private readEncodedString(): string {
+    const length = this.readEncodedInt();
+    const str = this.bytesToString(this.data.slice(this.index, this.index + length));
+    this.index += length;
     return str;
   }
 
-  // Read 4-byte little-endian unsigned integer
-  private readUInt32LE(): number {
-    const value = this.buffer.readUInt32LE(this.position);
-    this.position += 4;
-    return value;
+  // Helper method to convert bytes to string
+  private bytesToString(arr: Uint8Array): string {
+    return Array.from(arr).map((byte) => String.fromCharCode(byte)).join('');
   }
 
-  // Read 8-byte little-endian unsigned long
-  private readUInt64LE(): number {
-    const low = this.buffer.readUInt32LE(this.position);
-    const high = this.buffer.readUInt32LE(this.position + 4);
-    this.position += 8;
-    return high * 0x100000000 + low;
+  // Read 32-bit little-endian integer
+  private readUint32(): number {
+    return (
+      this.data[this.index++] +
+      (this.data[this.index++] << 8) +
+      (this.data[this.index++] << 16) +
+      (this.data[this.index++] << 24)
+    );
+  }
+
+  // Read 64-bit little-endian integer
+  private readUint64(): bigint {
+    let result = BigInt(0);
+    let shift = BigInt(0);
+    for (let i = 0; i < 8; i++) {
+      result += BigInt(this.data[this.index++]) << shift;
+      shift += BigInt(8);
+    }
+    return result;
   }
 
   parse(): RDBKey[] {
-    const keys: RDBKey[] = [];
-
-    // Skip header (REDIS + version)
-    if (this.buffer.subarray(0, 5).toString() !== "REDIS") {
-      throw new Error("Invalid RDB file: missing REDIS header");
+    // Check header
+    if (this.bytesToString(this.data.slice(0, 5)) !== "REDIS") {
+      console.log(`Invalid RDB file: missing REDIS header`);
+      return [];
     }
-    this.position = 9; // Skip "REDIS0011"
 
-    while (this.position < this.buffer.length) {
-      const opcode = this.buffer[this.position++];
+    console.log(`Version: ${this.bytesToString(this.data.slice(5, 9))}`);
+    this.index = 9; // Skip header and version
 
-      if (opcode === 0xFF) {
-        // EOF marker
-        break;
-      } else if (opcode === 0xFA) {
-        // Metadata subsection - skip
-        this.readString(); // metadata name
-        this.readString(); // metadata value
-      } else if (opcode === 0xFE) {
-        // Database subsection
-        const dbIndex = this.readSize();
-        console.log(`Processing database ${dbIndex}`);
-      } else if (opcode === 0xFB) {
-        // Hash table sizes
-        const keyValueHashTableSize = this.readSize();
-        const expiryHashTableSize = this.readSize();
-        console.log(`Hash table sizes: keys=${keyValueHashTableSize}, expiry=${expiryHashTableSize}`);
-      } else if (opcode === 0xFC) {
-        // Expiry in milliseconds
-        const expiry = this.readUInt64LE();
-        const valueType = this.buffer[this.position++];
-        const key = this.readString();
-        const value = this.readValue(valueType);
-        keys.push({ key, value, expiry, type: this.getValueType(valueType) });
-      } else if (opcode === 0xFD) {
-        // Expiry in seconds
-        const expiry = this.readUInt32LE() * 1000; // Convert to milliseconds
-        const valueType = this.buffer[this.position++];
-        const key = this.readString();
-        const value = this.readValue(valueType);
-        keys.push({ key, value, expiry, type: this.getValueType(valueType) });
-      } else {
-        // Value type (no expiry)
-        const valueType = opcode;
-        const key = this.readString();
-        const value = this.readValue(valueType);
-        keys.push({ key, value, type: this.getValueType(valueType) });
+    let eof = false;
+    while (!eof && this.index < this.data.length) {
+      const op = this.data[this.index++];
+      switch (op) {
+        case 0xFA: {
+          // Metadata section
+          const key = this.readEncodedString();
+          switch (key) {
+            case "redis-ver":
+              console.log(key, this.readEncodedString());
+              break;
+            case "redis-bits":
+              console.log(key, this.readEncodedInt());
+              break;
+            case "ctime":
+              console.log(key, new Date(this.readEncodedInt() * 1000));
+              break;
+            case "used-mem":
+              console.log(key, this.readEncodedInt());
+              break;
+            case "aof-preamble":
+              console.log(key, this.readEncodedInt());
+              break;
+            default:
+              // Skip unknown metadata
+              this.readEncodedString();
+              break;
+          }
+          break;
+        }
+        case 0xFB:
+          console.log("keyspace", this.readEncodedInt());
+          console.log("expires", this.readEncodedInt());
+          this.readEntries();
+          break;
+        case 0xFE:
+          console.log("db selector", this.readEncodedInt());
+          break;
+        case 0xFF:
+          eof = true;
+          break;
+        default:
+          throw Error("op not implemented: " + op);
       }
     }
 
-    return keys;
+    return Array.from(this.entries.values());
   }
 
-  private readValue(valueType: number): any {
-    switch (valueType) {
-      case 0: // String
-        return this.readString();
-      default:
-        throw new Error(`Unsupported value type: ${valueType}`);
-    }
-  }
+  private readEntries() {
+    const now = new Date();
+    while (this.index < this.data.length) {
+      let type = this.data[this.index++];
+      let expiration: Date | undefined;
 
-  private getValueType(valueType: number): "string" | "list" | "hash" | "set" | "zset" {
-    switch (valueType) {
-      case 0: return "string";
-      case 1: return "list";
-      case 2: return "set";
-      case 3: return "zset";
-      case 4: return "hash";
-      default: return "string";
+      if (type === 0xFF) {
+        this.index--;
+        break;
+      } else if (type === 0xFC) { // Expire time in milliseconds
+        const milliseconds = this.readUint64();
+        expiration = new Date(Number(milliseconds));
+        type = this.data[this.index++];
+      } else if (type === 0xFD) { // Expire time in seconds
+        const seconds = this.readUint32();
+        expiration = new Date(Number(seconds) * 1000);
+        type = this.data[this.index++];
+      }
+
+      const key = this.readEncodedString();
+      switch (type) {
+        case 0: { // string encoding
+          const value = this.readEncodedString();
+          console.log(key, value, expiration);
+          if ((expiration ?? now) >= now) {
+            const expiryMs = expiration ? expiration.getTime() : undefined;
+            this.entries.set(key, { key, value, expiry: expiryMs, type: "string" });
+          }
+          break;
+        }
+        default:
+          throw Error("type not implemented: " + type);
+      }
     }
   }
 }
