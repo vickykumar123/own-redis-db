@@ -1,6 +1,10 @@
 // Redis server implementing RESP protocol with expiry support
 import * as net from "net";
-import {parseRESPCommand, encodeError, calculateRESPCommandBytes} from "./parser";
+import {
+  parseRESPCommand,
+  encodeError,
+  calculateRESPCommandBytes,
+} from "./parser";
 import {RedisCommands} from "./commands";
 import {type ServerConfig, createServerConfig} from "./config/server-config";
 
@@ -8,7 +12,12 @@ import {type ServerConfig, createServerConfig} from "./config/server-config";
 console.log("Logs from your program will appear here!");
 
 // Parse command line arguments
-function parseServerArgs(): {port: number; config: ServerConfig} {
+function parseServerArgs(): {
+  port: number;
+  config: ServerConfig;
+  rdbDirValue?: string;
+  rdbFilename?: string;
+} {
   let port = 6379;
   let configOverrides: Partial<ServerConfig> = {};
 
@@ -36,17 +45,32 @@ function parseServerArgs(): {port: number; config: ServerConfig} {
     }
   }
 
+  const rdbDirIndex = process.argv.indexOf("--dir");
+  let rdbDirValue;
+  if (rdbDirIndex !== -1 && process.argv.length > rdbDirIndex + 1) {
+    rdbDirValue = process.argv[rdbDirIndex + 1];
+  }
+
+  const rdbFilenameIndex = process.argv.indexOf("--dbfilename");
+  let rdbFilename;
+  if (rdbFilenameIndex !== -1 && process.argv.length > rdbFilenameIndex + 1) {
+    const rdbFilenameValue = process.argv[rdbFilenameIndex + 1];
+    rdbFilename = rdbFilenameValue;
+  }
+
   return {
     port,
     config: createServerConfig({
       ...configOverrides,
       port: port, // Include the server port in config
     }),
+    rdbDirValue,
+    rdbFilename,
   };
 }
 
-const {port, config} = parseServerArgs();
-const redisCommands = new RedisCommands(config);
+const {port, config, rdbDirValue, rdbFilename} = parseServerArgs();
+const redisCommands = new RedisCommands(config, rdbDirValue, rdbFilename);
 
 // Start replication handshake if this server is a replica
 if (config.role === "slave") {
@@ -75,7 +99,7 @@ const server: net.Server = net.createServer((socket: net.Socket) => {
           }
 
           const {command, args} = parsedCommand;
-          
+
           // Calculate how many bytes this command consumed
           const commandBytes = calculateRESPCommandBytes(command, args);
           offset += commandBytes;
@@ -88,9 +112,17 @@ const server: net.Server = net.createServer((socket: net.Socket) => {
           if (response !== undefined) {
             // Check if this is a replica socket - replicas should not receive responses
             if (redisCommands.isReplicaSocket(socket)) {
-              console.log(`[MAIN] SKIPPING response to replica ${socket.remoteAddress}:${socket.remotePort}: ${JSON.stringify(response.substring(0, 20))}`);
+              console.log(
+                `[MAIN] SKIPPING response to replica ${socket.remoteAddress}:${
+                  socket.remotePort
+                }: ${JSON.stringify(response.substring(0, 20))}`
+              );
             } else {
-              console.log(`[MAIN] Sending response to client ${socket.remoteAddress}:${socket.remotePort}: ${JSON.stringify(response.substring(0, 20))}`);
+              console.log(
+                `[MAIN] Sending response to client ${socket.remoteAddress}:${
+                  socket.remotePort
+                }: ${JSON.stringify(response.substring(0, 20))}`
+              );
               socket.write(response);
             }
           }

@@ -40,13 +40,21 @@ export class RedisCommands {
   private transactionState: Map<string, boolean> = new Map(); // Per-connection transaction state
   private commandQueues: Map<string, QueuedCommand[]> = new Map(); // Per-connection command queues
   private executingTransaction = false; // Flag to bypass transaction logic during EXEC
+  private rdbFilename?: string;
+  private rdbDir?: string;
 
-  constructor(config: ServerConfig = DEFAULT_SERVER_CONFIG) {
+  constructor(
+    config: ServerConfig = DEFAULT_SERVER_CONFIG,
+    rdbDir?: string,
+    rdbFilename?: string
+  ) {
     this.kvStore = new Map<string, KeyValueEntry>();
     this.stringCommands = new StringCommands(this.kvStore);
     this.listCommands = new ListCommands(this.kvStore);
     this.streamCommands = new StreamCommands(this.kvStore);
-    
+    this.rdbDir = rdbDir;
+    this.rdbFilename = rdbFilename;
+
     // Pass a command executor to ReplicationManager so replicas can execute commands locally
     const commandExecutor = async (command: string, args: string[]) => {
       // Use a mock socket for replica command execution (no actual network socket needed)
@@ -152,6 +160,9 @@ export class RedisCommands {
       case "WAIT":
         response = await this.handleWait(args);
         break;
+      case "CONFIG":
+        response = this.handleConfig(args);
+        break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
     }
@@ -164,7 +175,9 @@ export class RedisCommands {
       !response.startsWith("-") &&
       !this.replicationManager.isReplica()
     ) {
-      console.log(`[MASTER] Propagating command to replicas: ${command} ${args.join(' ')}`);
+      console.log(
+        `[MASTER] Propagating command to replicas: ${command} ${args.join(" ")}`
+      );
       this.replicationManager.propagateCommand(command, args);
     }
 
@@ -363,7 +376,9 @@ export class RedisCommands {
         this.sendEmptyRDBFile(socket);
 
         // Register this connection as a replica
-        console.log(`[MASTER] <<<< PSYNC: Adding replica connection from ${socket.remoteAddress}:${socket.remotePort}`);
+        console.log(
+          `[MASTER] <<<< PSYNC: Adding replica connection from ${socket.remoteAddress}:${socket.remotePort}`
+        );
         this.replicationManager.addReplicaConnection(socket);
 
         return undefined; // Don't return response since we already wrote to socket
@@ -372,6 +387,31 @@ export class RedisCommands {
       return fullresyncResponse;
     }
     return encodeError("ERR PSYNC not fully implemented");
+  }
+
+  private handleConfig(args: string[]): string {
+    if (args.length < 1) {
+      return encodeError("ERR wrong number of arguments for 'config' command");
+    }
+    const subcommand = args[0].toUpperCase();
+    if (subcommand === "GET") {
+      if (args.length !== 2) {
+        return encodeError("ERR wrong number of arguments for 'CONFIG GET'");
+      }
+      const pattern = args[1];
+      // For simplicity, only support "dbfilename" and "dir"
+      const configEntries: string[] = [];
+      if (pattern === "*" || pattern === "dbfilename") {
+        configEntries.push("dbfilename");
+        configEntries.push(this.rdbFilename || "dump.rdb");
+      }
+      if (pattern === "*" || pattern === "dir") {
+        configEntries.push("dir");
+        configEntries.push(this.rdbDir || ".");
+      }
+      return encodeArray(configEntries);
+    }
+    return encodeError(`ERR unknown CONFIG subcommand '${subcommand}'`);
   }
 
   private sendEmptyRDBFile(socket: net.Socket): void {
@@ -494,7 +534,9 @@ export class RedisCommands {
       return encodeError("ERR negative number of replicas");
     }
 
-    console.log(`[DEBUG] WAIT command: requesting ${numReplicas} replicas, timeout ${timeout}ms`);
+    console.log(
+      `[DEBUG] WAIT command: requesting ${numReplicas} replicas, timeout ${timeout}ms`
+    );
 
     // If no replicas are needed, return immediately
     if (numReplicas === 0) {
@@ -503,7 +545,9 @@ export class RedisCommands {
 
     // Get the current number of connected replicas
     const connectedReplicas = this.replicationManager.getReplicaCount();
-    console.log(`[DEBUG] Currently have ${connectedReplicas} connected replicas`);
+    console.log(
+      `[DEBUG] Currently have ${connectedReplicas} connected replicas`
+    );
 
     // If no replicas are connected, return 0 immediately
     if (connectedReplicas === 0) {
@@ -511,9 +555,14 @@ export class RedisCommands {
     }
 
     // Delegate to replication manager to handle the actual WAIT logic
-    const acknowledgedReplicas = await this.replicationManager.waitForReplicas(numReplicas, timeout);
-    
-    console.log(`[DEBUG] WAIT completed: ${acknowledgedReplicas} replicas acknowledged`);
+    const acknowledgedReplicas = await this.replicationManager.waitForReplicas(
+      numReplicas,
+      timeout
+    );
+
+    console.log(
+      `[DEBUG] WAIT completed: ${acknowledgedReplicas} replicas acknowledged`
+    );
     return encodeInteger(acknowledgedReplicas);
   }
 
