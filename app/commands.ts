@@ -101,6 +101,16 @@ export class RedisCommands {
       return this.queueCommand(command, args, socket);
     }
 
+    const isInSubscriptionMode = this.subscriptions.has(
+      this.getConnectionId(socket)
+    );
+    if (isInSubscriptionMode) {
+      const subscriptionResponse = this.handleSubscriptionsMode(command);
+      if (subscriptionResponse) {
+        return subscriptionResponse;
+      }
+    }
+
     switch (command.toUpperCase()) {
       case "PING":
         response = this.handlePing(args);
@@ -479,6 +489,21 @@ export class RedisCommands {
     }
 
     return response;
+  }
+
+  private handleSubscriptionsMode(command: string) {
+    const allowedCommands = new Set([
+      "PING",
+      "ECHO",
+      "SUBSCRIBE",
+      "UNSUBSCRIBE",
+      "PSUBSCRIBE",
+      "PUNSUBSCRIBE",
+    ]);
+
+    if (!allowedCommands.has(command.toUpperCase())) {
+      return encodeError(`ERR Can't execute '${command}' in subscription mode`);
+    }
   }
 
   private matchesPattern(key: string, pattern: string): boolean {
