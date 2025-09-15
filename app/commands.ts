@@ -215,7 +215,7 @@ export class RedisCommands {
 
   private handlePing(args: string[], isInSubscriptionMode: boolean): string {
     if (isInSubscriptionMode) {
-      return encodeArray(["PONG", ""]);
+      return encodeArray(["pong", ""]);
     }
     return encodeSimpleString("PONG");
   }
