@@ -7,7 +7,7 @@ import {
 } from "./parser";
 import * as net from "net";
 import * as path from "path";
-import { parseRDBFile } from "./rdb-parser";
+import {parseRDBFile} from "./rdb-parser";
 import {StringCommands} from "./commands/string-commands";
 import {ListCommands} from "./commands/list-commands";
 import {StreamCommands} from "./commands/stream-commands";
@@ -172,6 +172,9 @@ export class RedisCommands {
         break;
       case "KEYS":
         response = this.handleKeys(args);
+        break;
+      case "SUBSCRIBE":
+        response = this.handleSubscribe(args);
         break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
@@ -441,6 +444,19 @@ export class RedisCommands {
     return encodeArray(matchingKeys);
   }
 
+  private handleSubscribe(args: string[]): string {
+    if (args.length < 1) {
+      return encodeError(
+        "ERR wrong number of arguments for 'subscribe' command"
+      );
+    }
+    // Subscription logic would go here
+    const channels = args;
+    const channelsList = channels.join(", ");
+    const channelCount = channels.length;
+    return encodeArray(["subscribe", channelsList, channelCount.toString()]);
+  }
+
   private matchesPattern(key: string, pattern: string): boolean {
     // Convert Redis glob pattern to regex
     // * matches any sequence of characters
@@ -455,12 +471,12 @@ export class RedisCommands {
 
     // Escape regex special characters except our glob characters
     let regexPattern = pattern
-      .replace(/[.+^${}()|[\]\\]/g, '\\$&') // Escape regex specials
-      .replace(/\\\*/g, '.*')              // * becomes .*
-      .replace(/\\\?/g, '.');              // ? becomes .
+      .replace(/[.+^${}()|[\]\\]/g, "\\$&") // Escape regex specials
+      .replace(/\\\*/g, ".*") // * becomes .*
+      .replace(/\\\?/g, "."); // ? becomes .
 
     // Add anchors to match entire string
-    regexPattern = '^' + regexPattern + '$';
+    regexPattern = "^" + regexPattern + "$";
 
     try {
       const regex = new RegExp(regexPattern);
@@ -639,7 +655,7 @@ export class RedisCommands {
       this.kvStore.set(rdbKey.key, {
         value: rdbKey.value,
         expiry: rdbKey.expiry,
-        type: rdbKey.type
+        type: rdbKey.type,
       });
     }
 
