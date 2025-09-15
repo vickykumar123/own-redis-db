@@ -450,11 +450,23 @@ export class RedisCommands {
         "ERR wrong number of arguments for 'subscribe' command"
       );
     }
-    // Subscription logic would go here
-    const channels = args;
-    const channelsList = channels.join(", ");
-    const channelCount = channels.length;
-    return encodeArray(["subscribe", channelsList, channelCount.toString()]);
+
+    // For SUBSCRIBE command, we should return a response for each channel
+    // Redis sends one response per channel subscribed to
+    let response = "";
+
+    for (let i = 0; i < args.length; i++) {
+      const channel = args[i];
+      const subscriptionCount = i + 1; // Subscription count increments for each channel
+
+      // Manual RESP encoding: *3\r\n$9\r\nsubscribe\r\n$<channel_length>\r\n<channel>\r\n:<count>\r\n
+      response += "*3\r\n"; // Array with 3 elements
+      response += encodeBulkString("subscribe"); // First element: "subscribe" as bulk string
+      response += encodeBulkString(channel); // Second element: channel name as bulk string
+      response += encodeInteger(subscriptionCount); // Third element: count as integer
+    }
+
+    return response;
   }
 
   private matchesPattern(key: string, pattern: string): boolean {
