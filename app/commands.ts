@@ -12,6 +12,7 @@ import {StringCommands} from "./commands/string-commands";
 import {ListCommands} from "./commands/list-commands";
 import {StreamCommands} from "./commands/stream-commands";
 import {ReplicationManager} from "./commands/replication-manager";
+import {PubSubCommands} from "./commands/pubsub-commands";
 import {type ServerConfig, DEFAULT_SERVER_CONFIG} from "./config/server-config";
 
 // Enhanced key-value store with expiry support
@@ -39,13 +40,13 @@ export class RedisCommands {
   private listCommands: ListCommands;
   private streamCommands: StreamCommands;
   private replicationManager: ReplicationManager;
+  private pubsubCommands: PubSubCommands;
   private transactionState: Map<string, boolean> = new Map(); // Per-connection transaction state
   private commandQueues: Map<string, QueuedCommand[]> = new Map(); // Per-connection command queues
   private executingTransaction = false; // Flag to bypass transaction logic during EXEC
   private rdbFilename?: string;
   private rdbDir?: string;
   private subscriptions: Map<string, Set<string>> = new Map(); // Per-connection subscriptions: connectionId -> Set<channelName>
-  private connectionSockets: Map<string, net.Socket> = new Map(); // Track sockets by connection ID
 
   constructor(
     config: ServerConfig = DEFAULT_SERVER_CONFIG,
@@ -56,6 +57,7 @@ export class RedisCommands {
     this.stringCommands = new StringCommands(this.kvStore);
     this.listCommands = new ListCommands(this.kvStore);
     this.streamCommands = new StreamCommands(this.kvStore);
+    this.pubsubCommands = new PubSubCommands(this.subscriptions);
     this.rdbDir = rdbDir;
     this.rdbFilename = rdbFilename;
 
@@ -102,11 +104,9 @@ export class RedisCommands {
       return this.queueCommand(command, args, socket);
     }
 
-    const isInSubscriptionMode = this.subscriptions.has(
-      this.getConnectionId(socket)
-    );
+    const isInSubscriptionMode = this.pubsubCommands.isInSubscriptionMode(socket);
     if (isInSubscriptionMode) {
-      const subscriptionResponse = this.handleSubscriptionsMode(command);
+      const subscriptionResponse = this.pubsubCommands.handleSubscriptionsMode(command);
       if (subscriptionResponse) {
         return subscriptionResponse;
       }
@@ -186,13 +186,13 @@ export class RedisCommands {
         response = this.handleKeys(args);
         break;
       case "SUBSCRIBE":
-        response = this.handleSubscribe(args, socket);
+        response = this.pubsubCommands.handleSubscribe(args, socket);
         break;
       case "PUBLISH":
-        response = this.handlePublish(args);
+        response = this.pubsubCommands.handlePublish(args);
         break;
       case "UNSUBSCRIBE":
-        response = this.handleUnsubscribe(args, socket);
+        response = this.pubsubCommands.handleUnsubscribe(args, socket);
         break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
@@ -465,121 +465,10 @@ export class RedisCommands {
     return encodeArray(matchingKeys);
   }
 
-  private handleSubscribe(args: string[], socket: net.Socket): string {
-    if (args.length < 1) {
-      return encodeError(
-        "ERR wrong number of arguments for 'subscribe' command"
-      );
-    }
 
-    const connectionId = this.getConnectionId(socket);
 
-    // Track the socket for this connection
-    this.connectionSockets.set(connectionId, socket);
 
-    // Get or create subscription set for this connection
-    if (!this.subscriptions.has(connectionId)) {
-      this.subscriptions.set(connectionId, new Set<string>());
-    }
-    const connectionSubscriptions = this.subscriptions.get(connectionId)!;
 
-    // For SUBSCRIBE command, we should return a response for each channel
-    // Redis sends one response per channel subscribed to
-    let response = "";
-
-    for (const channel of args) {
-      // Add channel to subscriptions (Set automatically handles duplicates)
-      connectionSubscriptions.add(channel);
-
-      // Get current subscription count for this connection
-      const subscriptionCount = connectionSubscriptions.size;
-
-      // Manual RESP encoding: *3\r\n$9\r\nsubscribe\r\n$<channel_length>\r\n<channel>\r\n:<count>\r\n
-      response += "*3\r\n"; // Array with 3 elements
-      response += encodeBulkString("subscribe"); // First element: "subscribe" as bulk string
-      response += encodeBulkString(channel); // Second element: channel name as bulk string
-      response += encodeInteger(subscriptionCount); // Third element: count as integer
-    }
-
-    return response;
-  }
-
-  private handlePublish(args: string[]): string {
-    if (args.length !== 2) {
-      return encodeError("ERR wrong number of arguments for 'publish' command");
-    }
-    const channel = args[0];
-    const message = args[1];
-    let receivers = 0;
-
-    // Deliver message to all subscribed clients
-    for (const [connectionId, channels] of this.subscriptions) {
-      if (channels.has(channel)) {
-        receivers++;
-        const socket = this.connectionSockets.get(connectionId);
-        if (socket && !socket.destroyed) {
-          // Send message in format: ["message", "channel", "message_content"]
-          const messageResponse = this.encodePublishMessage(channel, message);
-          socket.write(messageResponse);
-          console.log(
-            `[PUBLISH] Sent message to ${connectionId} on channel '${channel}': ${message}`
-          );
-        }
-      }
-    }
-    return encodeInteger(receivers);
-  }
-
-  private handleUnsubscribe(args: string[], socket: net.Socket): string {
-    if (args.length < 1) {
-      return encodeError(
-        "ERR wrong number of arguments for 'unsubscribe' command"
-      );
-    }
-    const connectionId = this.getConnectionId(socket);
-    const connectionSubscriptions = this.subscriptions.get(connectionId);
-    if (!connectionSubscriptions) {
-      return encodeError("ERR not subscribed to any channels");
-    }
-    let response = "";
-    for (const channel of args) {
-      connectionSubscriptions.delete(channel);
-      const subscriptionCount = connectionSubscriptions.size;
-      response += "*3\r\n"; // Array with 3 elements
-      response += encodeBulkString("unsubscribe");
-      response += encodeBulkString(channel);
-      response += encodeInteger(subscriptionCount);
-    }
-    // If no more subscriptions, remove the entry
-    if (connectionSubscriptions.size === 0) {
-      this.subscriptions.delete(connectionId);
-    }
-    return response;
-  }
-
-  private encodePublishMessage(channel: string, message: string): string {
-    // Format: *3\r\n$7\r\nmessage\r\n$<channel_length>\r\n<channel>\r\n$<message_length>\r\n<message>\r\n
-    let response = "*3\r\n"; // Array with 3 elements
-    response += encodeBulkString("message"); // First element: "message" as bulk string
-    response += encodeBulkString(channel); // Second element: channel name as bulk string
-    response += encodeBulkString(message); // Third element: message content as bulk string
-    return response;
-  }
-
-  private handleSubscriptionsMode(command: string) {
-    const allowedCommands = new Set([
-      "PING",
-      "SUBSCRIBE",
-      "UNSUBSCRIBE",
-      "PSUBSCRIBE",
-      "PUNSUBSCRIBE",
-      "QUIT",
-    ]);
-
-    if (!allowedCommands.has(command.toUpperCase())) {
-      return encodeError(`ERR Can't execute '${command}' in subscription mode`);
-    }
-  }
 
   private matchesPattern(key: string, pattern: string): boolean {
     // Convert Redis glob pattern to regex
@@ -789,8 +678,7 @@ export class RedisCommands {
   // Clean up connection when client disconnects
   cleanupConnection(socket: net.Socket): void {
     const connectionId = this.getConnectionId(socket);
-    this.subscriptions.delete(connectionId);
-    this.connectionSockets.delete(connectionId);
+    this.pubsubCommands.cleanupConnection(socket);
     this.transactionState.delete(connectionId);
     this.commandQueues.delete(connectionId);
     console.log(`[CLEANUP] Removed connection ${connectionId}`);
