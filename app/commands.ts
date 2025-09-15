@@ -45,6 +45,7 @@ export class RedisCommands {
   private rdbFilename?: string;
   private rdbDir?: string;
   private subscriptions: Map<string, Set<string>> = new Map(); // Per-connection subscriptions: connectionId -> Set<channelName>
+  private connectionSockets: Map<string, net.Socket> = new Map(); // Track sockets by connection ID
 
   constructor(
     config: ServerConfig = DEFAULT_SERVER_CONFIG,
@@ -471,6 +472,9 @@ export class RedisCommands {
 
     const connectionId = this.getConnectionId(socket);
 
+    // Track the socket for this connection
+    this.connectionSockets.set(connectionId, socket);
+
     // Get or create subscription set for this connection
     if (!this.subscriptions.has(connectionId)) {
       this.subscriptions.set(connectionId, new Set<string>());
@@ -505,14 +509,32 @@ export class RedisCommands {
     const channel = args[0];
     const message = args[1];
     let receivers = 0;
+
+    // Deliver message to all subscribed clients
     for (const [connectionId, channels] of this.subscriptions) {
       if (channels.has(channel)) {
         receivers++;
-        // In a full implementation, we would send the message to the subscriber's socket
-        // For simplicity, we just count the number of receivers here
+        const socket = this.connectionSockets.get(connectionId);
+        if (socket && !socket.destroyed) {
+          // Send message in format: ["message", "channel", "message_content"]
+          const messageResponse = this.encodePublishMessage(channel, message);
+          socket.write(messageResponse);
+          console.log(
+            `[PUBLISH] Sent message to ${connectionId} on channel '${channel}': ${message}`
+          );
+        }
       }
     }
     return encodeInteger(receivers);
+  }
+
+  private encodePublishMessage(channel: string, message: string): string {
+    // Format: *3\r\n$7\r\nmessage\r\n$<channel_length>\r\n<channel>\r\n$<message_length>\r\n<message>\r\n
+    let response = "*3\r\n"; // Array with 3 elements
+    response += encodeBulkString("message"); // First element: "message" as bulk string
+    response += encodeBulkString(channel); // Second element: channel name as bulk string
+    response += encodeBulkString(message); // Third element: message content as bulk string
+    return response;
   }
 
   private handleSubscriptionsMode(command: string) {
@@ -733,6 +755,16 @@ export class RedisCommands {
     }
 
     console.log(`Loaded ${rdbKeys.length} keys from RDB file`);
+  }
+
+  // Clean up connection when client disconnects
+  cleanupConnection(socket: net.Socket): void {
+    const connectionId = this.getConnectionId(socket);
+    this.subscriptions.delete(connectionId);
+    this.connectionSockets.delete(connectionId);
+    this.transactionState.delete(connectionId);
+    this.commandQueues.delete(connectionId);
+    console.log(`[CLEANUP] Removed connection ${connectionId}`);
   }
 
   // For testing or debugging
