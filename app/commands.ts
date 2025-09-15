@@ -187,6 +187,10 @@ export class RedisCommands {
       case "SUBSCRIBE":
         response = this.handleSubscribe(args, socket);
         break;
+      case "PUBLISH":
+        response = this.handlePublish(args);
+        break;
+
       default:
         response = encodeError(`ERR unknown command '${command}'`);
     }
@@ -492,6 +496,23 @@ export class RedisCommands {
     }
 
     return response;
+  }
+
+  private handlePublish(args: string[]): string {
+    if (args.length !== 2) {
+      return encodeError("ERR wrong number of arguments for 'publish' command");
+    }
+    const channel = args[0];
+    const message = args[1];
+    let receivers = 0;
+    for (const [connectionId, channels] of this.subscriptions) {
+      if (channels.has(channel)) {
+        receivers++;
+        // In a full implementation, we would send the message to the subscriber's socket
+        // For simplicity, we just count the number of receivers here
+      }
+    }
+    return encodeInteger(receivers);
   }
 
   private handleSubscriptionsMode(command: string) {
