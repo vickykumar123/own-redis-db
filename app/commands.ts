@@ -191,7 +191,9 @@ export class RedisCommands {
       case "PUBLISH":
         response = this.handlePublish(args);
         break;
-
+      case "UNSUBSCRIBE":
+        response = this.handleUnsubscribe(args, socket);
+        break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
     }
@@ -526,6 +528,33 @@ export class RedisCommands {
       }
     }
     return encodeInteger(receivers);
+  }
+
+  private handleUnsubscribe(args: string[], socket: net.Socket): string {
+    if (args.length < 1) {
+      return encodeError(
+        "ERR wrong number of arguments for 'unsubscribe' command"
+      );
+    }
+    const connectionId = this.getConnectionId(socket);
+    const connectionSubscriptions = this.subscriptions.get(connectionId);
+    if (!connectionSubscriptions) {
+      return encodeError("ERR not subscribed to any channels");
+    }
+    let response = "";
+    for (const channel of args) {
+      connectionSubscriptions.delete(channel);
+      const subscriptionCount = connectionSubscriptions.size;
+      response += "*3\r\n"; // Array with 3 elements
+      response += encodeBulkString("unsubscribe");
+      response += encodeBulkString(channel);
+      response += encodeInteger(subscriptionCount);
+    }
+    // If no more subscriptions, remove the entry
+    if (connectionSubscriptions.size === 0) {
+      this.subscriptions.delete(connectionId);
+    }
+    return response;
   }
 
   private encodePublishMessage(channel: string, message: string): string {
