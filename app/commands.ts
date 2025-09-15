@@ -494,11 +494,11 @@ export class RedisCommands {
   private handleSubscriptionsMode(command: string) {
     const allowedCommands = new Set([
       "PING",
-      "ECHO",
       "SUBSCRIBE",
       "UNSUBSCRIBE",
       "PSUBSCRIBE",
       "PUNSUBSCRIBE",
+      "QUIT",
     ]);
 
     if (!allowedCommands.has(command.toUpperCase())) {
