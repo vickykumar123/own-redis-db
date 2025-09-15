@@ -113,7 +113,7 @@ export class RedisCommands {
 
     switch (command.toUpperCase()) {
       case "PING":
-        response = this.handlePing(args);
+        response = this.handlePing(args, isInSubscriptionMode);
         break;
       case "ECHO":
         response = this.handleEcho(args);
@@ -213,7 +213,10 @@ export class RedisCommands {
     return response;
   }
 
-  private handlePing(args: string[]): string {
+  private handlePing(args: string[], isInSubscriptionMode: boolean): string {
+    if (isInSubscriptionMode) {
+      return encodeArray(["PONG", ""]);
+    }
     return encodeSimpleString("PONG");
   }
 
