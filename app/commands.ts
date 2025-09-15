@@ -44,6 +44,7 @@ export class RedisCommands {
   private executingTransaction = false; // Flag to bypass transaction logic during EXEC
   private rdbFilename?: string;
   private rdbDir?: string;
+  private subscriptions: Map<string, Set<string>> = new Map(); // Per-connection subscriptions: connectionId -> Set<channelName>
 
   constructor(
     config: ServerConfig = DEFAULT_SERVER_CONFIG,
@@ -174,7 +175,7 @@ export class RedisCommands {
         response = this.handleKeys(args);
         break;
       case "SUBSCRIBE":
-        response = this.handleSubscribe(args);
+        response = this.handleSubscribe(args, socket);
         break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
@@ -444,20 +445,31 @@ export class RedisCommands {
     return encodeArray(matchingKeys);
   }
 
-  private handleSubscribe(args: string[]): string {
+  private handleSubscribe(args: string[], socket: net.Socket): string {
     if (args.length < 1) {
       return encodeError(
         "ERR wrong number of arguments for 'subscribe' command"
       );
     }
 
+    const connectionId = this.getConnectionId(socket);
+
+    // Get or create subscription set for this connection
+    if (!this.subscriptions.has(connectionId)) {
+      this.subscriptions.set(connectionId, new Set<string>());
+    }
+    const connectionSubscriptions = this.subscriptions.get(connectionId)!;
+
     // For SUBSCRIBE command, we should return a response for each channel
     // Redis sends one response per channel subscribed to
     let response = "";
 
-    for (let i = 0; i < args.length; i++) {
-      const channel = args[i];
-      const subscriptionCount = i + 1; // Subscription count increments for each channel
+    for (const channel of args) {
+      // Add channel to subscriptions (Set automatically handles duplicates)
+      connectionSubscriptions.add(channel);
+
+      // Get current subscription count for this connection
+      const subscriptionCount = connectionSubscriptions.size;
 
       // Manual RESP encoding: *3\r\n$9\r\nsubscribe\r\n$<channel_length>\r\n<channel>\r\n:<count>\r\n
       response += "*3\r\n"; // Array with 3 elements
