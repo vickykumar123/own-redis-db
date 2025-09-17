@@ -107,9 +107,11 @@ export class RedisCommands {
       return this.queueCommand(command, args, socket);
     }
 
-    const isInSubscriptionMode = this.pubsubCommands.isInSubscriptionMode(socket);
+    const isInSubscriptionMode =
+      this.pubsubCommands.isInSubscriptionMode(socket);
     if (isInSubscriptionMode) {
-      const subscriptionResponse = this.pubsubCommands.handleSubscriptionsMode(command);
+      const subscriptionResponse =
+        this.pubsubCommands.handleSubscriptionsMode(command);
       if (subscriptionResponse) {
         return subscriptionResponse;
       }
@@ -205,6 +207,9 @@ export class RedisCommands {
         break;
       case "ZRANGE":
         response = this.sortedSetCommands.handleZRange(args);
+        break;
+      case "ZCARD":
+        response = this.sortedSetCommands.handleZCard(args);
         break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
@@ -476,11 +481,6 @@ export class RedisCommands {
 
     return encodeArray(matchingKeys);
   }
-
-
-
-
-
 
   private matchesPattern(key: string, pattern: string): boolean {
     // Convert Redis glob pattern to regex

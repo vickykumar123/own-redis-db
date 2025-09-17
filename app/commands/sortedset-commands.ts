@@ -1,4 +1,9 @@
-import {encodeError, encodeInteger, encodeBulkString, encodeArray} from "../parser";
+import {
+  encodeError,
+  encodeInteger,
+  encodeBulkString,
+  encodeArray,
+} from "../parser";
 import {type KeyValueEntry} from "../commands";
 
 export class SortedSetCommands {
@@ -102,7 +107,9 @@ export class SortedSetCommands {
     }
 
     if (entry.type && entry.type !== "zset") {
-      return encodeError("WRONGTYPE Operation against a key holding the wrong kind of value");
+      return encodeError(
+        "WRONGTYPE Operation against a key holding the wrong kind of value"
+      );
     }
 
     const sortedSet = entry.value as Map<string, number>;
@@ -133,7 +140,8 @@ export class SortedSetCommands {
     const key = args[0];
     const start = parseInt(args[1], 10);
     const stop = parseInt(args[2], 10);
-    const withScores = args.length === 4 && args[3].toUpperCase() === "WITHSCORES";
+    const withScores =
+      args.length === 4 && args[3].toUpperCase() === "WITHSCORES";
 
     if (isNaN(start) || isNaN(stop)) {
       return encodeError("ERR value is not an integer or out of range");
@@ -145,7 +153,9 @@ export class SortedSetCommands {
     }
 
     if (entry.type && entry.type !== "zset") {
-      return encodeError("WRONGTYPE Operation against a key holding the wrong kind of value");
+      return encodeError(
+        "WRONGTYPE Operation against a key holding the wrong kind of value"
+      );
     }
 
     const sortedSet = entry.value as Map<string, number>;
@@ -187,5 +197,28 @@ export class SortedSetCommands {
       // Return [member1, member2, ...]
       return encodeArray(rangeMembers);
     }
+  }
+
+  handleZCard(args: string[]): string {
+    if (args.length < 1) {
+      return encodeError("ERR wrong number of arguments for 'zcard' command");
+    }
+
+    const key = args[0];
+    const entry = this.kvStore.get(key);
+    if (!entry) {
+      return encodeArray([]); // Empty array for non-existent key
+    }
+
+    if (entry.type && entry.type !== "zset") {
+      return encodeError(
+        "WRONGTYPE Operation against a key holding the wrong kind of value"
+      );
+    }
+
+    const sortedSet = entry.value as Map<string, number>;
+    const members = Array.from(sortedSet.keys()); // Already sorted by our ZADD implementation
+    const cardinality = members.length;
+    return encodeInteger(cardinality);
   }
 }
