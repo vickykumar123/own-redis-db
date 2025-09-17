@@ -203,6 +203,9 @@ export class RedisCommands {
       case "ZRANK":
         response = this.sortedSetCommands.handleZRank(args);
         break;
+      case "ZRANGE":
+        response = this.sortedSetCommands.handleZRange(args);
+        break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
     }

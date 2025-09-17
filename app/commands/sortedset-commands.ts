@@ -1,4 +1,4 @@
-import {encodeError, encodeInteger, encodeBulkString} from "../parser";
+import {encodeError, encodeInteger, encodeBulkString, encodeArray} from "../parser";
 import {type KeyValueEntry} from "../commands";
 
 export class SortedSetCommands {
@@ -122,5 +122,70 @@ export class SortedSetCommands {
 
     // This should never happen if member exists
     return encodeBulkString(null);
+  }
+
+  // ZRANGE key start stop [WITHSCORES]
+  handleZRange(args: string[]): string {
+    if (args.length < 3 || args.length > 4) {
+      return encodeError("ERR wrong number of arguments for 'zrange' command");
+    }
+
+    const key = args[0];
+    const start = parseInt(args[1], 10);
+    const stop = parseInt(args[2], 10);
+    const withScores = args.length === 4 && args[3].toUpperCase() === "WITHSCORES";
+
+    if (isNaN(start) || isNaN(stop)) {
+      return encodeError("ERR value is not an integer or out of range");
+    }
+
+    const entry = this.kvStore.get(key);
+    if (!entry) {
+      return encodeArray([]); // Empty array for non-existent key
+    }
+
+    if (entry.type && entry.type !== "zset") {
+      return encodeError("WRONGTYPE Operation against a key holding the wrong kind of value");
+    }
+
+    const sortedSet = entry.value as Map<string, number>;
+    const members = Array.from(sortedSet.keys()); // Already sorted by our ZADD implementation
+    const cardinality = members.length;
+
+    // Handle negative indices
+    let startIdx = start < 0 ? Math.max(0, cardinality + start) : start;
+    let stopIdx = stop < 0 ? Math.max(-1, cardinality + stop) : stop;
+
+    // If start index >= cardinality, return empty array
+    if (startIdx >= cardinality) {
+      return encodeArray([]);
+    }
+
+    // If stop index >= cardinality, treat as last element
+    if (stopIdx >= cardinality) {
+      stopIdx = cardinality - 1;
+    }
+
+    // If start > stop, return empty array
+    if (startIdx > stopIdx) {
+      return encodeArray([]);
+    }
+
+    // Get the range of members
+    const rangeMembers = members.slice(startIdx, stopIdx + 1);
+
+    if (withScores) {
+      // Return [member1, score1, member2, score2, ...]
+      const result: string[] = [];
+      for (const member of rangeMembers) {
+        const score = sortedSet.get(member)!;
+        result.push(member);
+        result.push(score.toString());
+      }
+      return encodeArray(result);
+    } else {
+      // Return [member1, member2, ...]
+      return encodeArray(rangeMembers);
+    }
   }
 }
