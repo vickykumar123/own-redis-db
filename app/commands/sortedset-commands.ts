@@ -1,8 +1,5 @@
-import {
-  encodeError,
-  encodeInteger,
-} from "../parser";
-import { KeyValueEntry } from "../commands";
+import {encodeError, encodeInteger} from "../parser";
+import {type KeyValueEntry} from "../commands";
 
 export class SortedSetCommands {
   private kvStore: Map<string, KeyValueEntry>;
@@ -18,12 +15,14 @@ export class SortedSetCommands {
     if (!entry) {
       // Create new sorted set
       const sortedSet = new Map<string, number>();
-      this.kvStore.set(key, { value: sortedSet, type: "zset" });
+      this.kvStore.set(key, {value: sortedSet, type: "zset"});
       return sortedSet;
     }
 
     if (entry.type && entry.type !== "zset") {
-      throw new Error(`WRONGTYPE Operation against a key holding the wrong kind of value`);
+      throw new Error(
+        `WRONGTYPE Operation against a key holding the wrong kind of value`
+      );
     }
 
     return entry.value as Map<string, number>;
@@ -31,13 +30,12 @@ export class SortedSetCommands {
 
   // Sort and rebuild the map to maintain sorted order
   private rebuildSortedOrder(sortedSet: Map<string, number>): void {
-    const sortedEntries = Array.from(sortedSet.entries())
-      .sort((a, b) => {
-        // Sort by score first
-        if (a[1] !== b[1]) return a[1] - b[1];
-        // Then by member name lexicographically
-        return a[0].localeCompare(b[0]);
-      });
+    const sortedEntries = Array.from(sortedSet.entries()).sort((a, b) => {
+      // Sort by score first
+      if (a[1] !== b[1]) return a[1] - b[1];
+      // Then by member name lexicographically
+      return a[0].localeCompare(b[0]);
+    });
 
     // Rebuild map in sorted order
     sortedSet.clear();
