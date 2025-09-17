@@ -13,6 +13,7 @@ import {ListCommands} from "./commands/list-commands";
 import {StreamCommands} from "./commands/stream-commands";
 import {ReplicationManager} from "./commands/replication-manager";
 import {PubSubCommands} from "./commands/pubsub-commands";
+import {SortedSetCommands} from "./commands/sortedset-commands";
 import {type ServerConfig, DEFAULT_SERVER_CONFIG} from "./config/server-config";
 
 // Enhanced key-value store with expiry support
@@ -41,6 +42,7 @@ export class RedisCommands {
   private streamCommands: StreamCommands;
   private replicationManager: ReplicationManager;
   private pubsubCommands: PubSubCommands;
+  private sortedSetCommands: SortedSetCommands;
   private transactionState: Map<string, boolean> = new Map(); // Per-connection transaction state
   private commandQueues: Map<string, QueuedCommand[]> = new Map(); // Per-connection command queues
   private executingTransaction = false; // Flag to bypass transaction logic during EXEC
@@ -58,6 +60,7 @@ export class RedisCommands {
     this.listCommands = new ListCommands(this.kvStore);
     this.streamCommands = new StreamCommands(this.kvStore);
     this.pubsubCommands = new PubSubCommands(this.subscriptions);
+    this.sortedSetCommands = new SortedSetCommands(this.kvStore);
     this.rdbDir = rdbDir;
     this.rdbFilename = rdbFilename;
 
@@ -193,6 +196,9 @@ export class RedisCommands {
         break;
       case "UNSUBSCRIBE":
         response = this.pubsubCommands.handleUnsubscribe(args, socket);
+        break;
+      case "ZADD":
+        response = this.sortedSetCommands.handleZAdd(args);
         break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
