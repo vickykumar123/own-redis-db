@@ -1,4 +1,4 @@
-import {encodeError, encodeInteger} from "../parser";
+import {encodeError, encodeInteger, encodeBulkString} from "../parser";
 import {type KeyValueEntry} from "../commands";
 
 export class SortedSetCommands {
@@ -85,5 +85,42 @@ export class SortedSetCommands {
       }
       return encodeError("ERR unknown error");
     }
+  }
+
+  // ZRANK key member - get the rank (0-based index) of a member
+  handleZRank(args: string[]): string {
+    if (args.length !== 2) {
+      return encodeError("ERR wrong number of arguments for 'zrank' command");
+    }
+
+    const key = args[0];
+    const member = args[1];
+
+    const entry = this.kvStore.get(key);
+    if (!entry) {
+      return encodeBulkString(null); // Null for non-existent key
+    }
+
+    if (entry.type && entry.type !== "zset") {
+      return encodeError("WRONGTYPE Operation against a key holding the wrong kind of value");
+    }
+
+    const sortedSet = entry.value as Map<string, number>;
+    if (!sortedSet.has(member)) {
+      return encodeBulkString(null); // Null for non-existent member
+    }
+
+    // Find the rank (0-based index) in the sorted set
+    // Since our map maintains sorted order (by score, then lexicographically), we iterate and count
+    let rank = 0;
+    for (const [currentMember] of sortedSet) {
+      if (currentMember === member) {
+        return encodeInteger(rank);
+      }
+      rank++;
+    }
+
+    // This should never happen if member exists
+    return encodeBulkString(null);
   }
 }
