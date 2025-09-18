@@ -223,6 +223,9 @@ export class RedisCommands {
       case "GEOADD":
         response = this.geoCommands.handleGeoAdd(args);
         break;
+      case "GEOPOS":
+        response = this.geoCommands.handleGeoPos(args);
+        break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
     }

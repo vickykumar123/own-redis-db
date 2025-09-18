@@ -1,4 +1,9 @@
-import {encodeError, encodeInteger} from "../parser";
+import {
+  encodeArray,
+  encodeBulkString,
+  encodeError,
+  encodeInteger,
+} from "../parser";
 import {type KeyValueEntry} from "../commands";
 
 const MIN_LATITUDE = -85.05112878;
@@ -33,15 +38,13 @@ function decodeConvertGridNumbersToCoordinates(
     LATITUDE_RANGE * ((gridLatitudeNumber * 1.0) / Math.pow(2, 26));
   const gridLatitudeMax =
     MIN_LATITUDE +
-    LATITUDE_RANGE *
-      (((gridLatitudeNumber + 1) * 1.0) / Math.pow(2, 26));
+    LATITUDE_RANGE * (((gridLatitudeNumber + 1) * 1.0) / Math.pow(2, 26));
   const gridLongitudeMin =
     MIN_LONGITUDE +
     LONGITUDE_RANGE * ((gridLongitudeNumber * 1.0) / Math.pow(2, 26));
   const gridLongitudeMax =
     MIN_LONGITUDE +
-    LONGITUDE_RANGE *
-      (((gridLongitudeNumber + 1) * 1.0) / Math.pow(2, 26));
+    LONGITUDE_RANGE * (((gridLongitudeNumber + 1) * 1.0) / Math.pow(2, 26));
 
   // Calculate the center point of the grid cell
   const latitude = (gridLatitudeMin + gridLatitudeMax) / 2;
@@ -65,7 +68,6 @@ function decodeGeohash(geoCode: bigint): DecodeCoordinates {
   );
 }
 
-
 function spread32BitsTo64Bits(v: number): bigint {
   let result = BigInt(v) & 0xffffffffn;
   result = (result | (result << 16n)) & 0x0000ffff0000ffffn;
@@ -86,11 +88,9 @@ function interleaveBits(x: number, y: number): bigint {
 function encodeGeoHash(latitude: number, longitude: number): bigint {
   // Normalize to the range 0-2^26
   const normalizedLatitude =
-    (Math.pow(2, 26) * (latitude - MIN_LATITUDE)) /
-    LATITUDE_RANGE;
+    (Math.pow(2, 26) * (latitude - MIN_LATITUDE)) / LATITUDE_RANGE;
   const normalizedLongitude =
-    (Math.pow(2, 26) * (longitude - MIN_LONGITUDE)) /
-    LONGITUDE_RANGE;
+    (Math.pow(2, 26) * (longitude - MIN_LONGITUDE)) / LONGITUDE_RANGE;
 
   // Truncate to integers
   const latInt = Math.floor(normalizedLatitude);
@@ -125,7 +125,6 @@ export class GeoCommands {
 
     return entry.value as Map<string, number>;
   }
-
 
   // Sort and rebuild the map to maintain sorted order (same as sorted sets)
   private rebuildSortedOrder(geoSet: Map<string, number>): void {
@@ -199,5 +198,30 @@ export class GeoCommands {
       }
       return encodeError("ERR unknown error");
     }
+  }
+
+  handleGeoPos(args: string[]): string {
+    if (args.length < 2) {
+      return encodeError("Invaild arguments length");
+    }
+
+    const key = args[0];
+    const location = args[1];
+
+    const entry = this.kvStore.get(key);
+    if (!entry) {
+      return encodeArray(null);
+    }
+
+    const geoLoc = entry.value;
+    if (!geoLoc.has(location)) {
+      return encodeArray(null);
+    }
+    const geoHash = geoLoc.get(location);
+    const decodedHash = decodeGeohash(geoHash);
+    const response = [];
+    response.push(encodeBulkString(decodedHash.longitude.toString()));
+    response.push(encodeBulkString(decodedHash.latitude.toString()));
+    return encodeArray(response);
   }
 }
