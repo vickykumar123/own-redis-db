@@ -214,6 +214,9 @@ export class RedisCommands {
       case "ZSCORE":
         response = this.sortedSetCommands.handleZScore(args);
         break;
+      case "ZREM":
+        response = this.sortedSetCommands.handleZRem(args);
+        break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
     }

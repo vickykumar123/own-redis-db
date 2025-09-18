@@ -246,4 +246,29 @@ export class SortedSetCommands {
     const score = sortedSet.get(member);
     return encodeBulkString(score?.toString() || null);
   }
+
+  handleZRem(args: string[]): string {
+    if (args.length < 2) {
+      return encodeError("ERR wrong number of arguments for 'zscore' command");
+    }
+    const key = args[0];
+    const member = args[1];
+
+    const entry = this.kvStore.get(key);
+    if (!entry) {
+      return encodeInteger(0); // Empty array for non-existent key
+    }
+
+    if (entry.type && entry.type !== "zset") {
+      return encodeError(
+        "WRONGTYPE Operation against a key holding the wrong kind of value"
+      );
+    }
+    const sortedSet = entry.value as Map<string, number>;
+    if (!sortedSet.has(member)) {
+      return encodeInteger(0); // Null for non-existent member
+    }
+    sortedSet.delete(member);
+    return encodeInteger(1);
+  }
 }
