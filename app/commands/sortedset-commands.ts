@@ -221,4 +221,29 @@ export class SortedSetCommands {
     const cardinality = members.length;
     return encodeInteger(cardinality);
   }
+
+  handleZScore(args: string[]): string {
+    if (args.length < 2) {
+      return encodeError("ERR wrong number of arguments for 'zscore' command");
+    }
+    const key = args[0];
+    const member = args[1];
+
+    const entry = this.kvStore.get(key);
+    if (!entry) {
+      return encodeBulkString(null); // Empty array for non-existent key
+    }
+
+    if (entry.type && entry.type !== "zset") {
+      return encodeError(
+        "WRONGTYPE Operation against a key holding the wrong kind of value"
+      );
+    }
+    const sortedSet = entry.value as Map<string, number>;
+    if (!sortedSet.has(member)) {
+      return encodeBulkString(null); // Null for non-existent member
+    }
+    const score = sortedSet.get(member);
+    return encodeBulkString(score?.toString() || null);
+  }
 }
