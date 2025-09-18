@@ -241,7 +241,7 @@ export class GeoCommands {
     let result = `*${response.length}\r\n`;
     for (const item of response) {
       if (item === null) {
-        result += "$-1\r\n"; // Null bulk string
+        result += "*-1\r\n"; // Null array (not null bulk string)
       } else {
         // Each position is an array of [longitude, latitude]
         result += "*2\r\n";
