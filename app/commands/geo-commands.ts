@@ -1,6 +1,104 @@
 import {encodeError, encodeInteger} from "../parser";
 import {type KeyValueEntry} from "../commands";
 
+const MIN_LATITUDE = -85.05112878;
+const MAX_LATITUDE = 85.05112878;
+const MIN_LONGITUDE = -180.0;
+const MAX_LONGITUDE = 180.0;
+
+const LATITUDE_RANGE = MAX_LATITUDE - MIN_LATITUDE;
+const LONGITUDE_RANGE = MAX_LONGITUDE - MIN_LONGITUDE;
+
+class DecodeCoordinates {
+  constructor(public latitude: number, public longitude: number) {}
+}
+
+function decodeCompactInt64ToInt32(v: bigint): number {
+  v = v & 0x5555555555555555n;
+  v = (v | (v >> 1n)) & 0x3333333333333333n;
+  v = (v | (v >> 2n)) & 0x0f0f0f0f0f0f0f0fn;
+  v = (v | (v >> 4n)) & 0x00ff00ff00ff00ffn;
+  v = (v | (v >> 8n)) & 0x0000ffff0000ffffn;
+  v = (v | (v >> 16n)) & 0x00000000ffffffffn;
+  return Number(v);
+}
+
+function decodeConvertGridNumbersToCoordinates(
+  gridLatitudeNumber: number,
+  gridLongitudeNumber: number
+): DecodeCoordinates {
+  // Calculate the grid boundaries
+  const gridLatitudeMin =
+    MIN_LATITUDE +
+    LATITUDE_RANGE * ((gridLatitudeNumber * 1.0) / Math.pow(2, 26));
+  const gridLatitudeMax =
+    MIN_LATITUDE +
+    LATITUDE_RANGE *
+      (((gridLatitudeNumber + 1) * 1.0) / Math.pow(2, 26));
+  const gridLongitudeMin =
+    MIN_LONGITUDE +
+    LONGITUDE_RANGE * ((gridLongitudeNumber * 1.0) / Math.pow(2, 26));
+  const gridLongitudeMax =
+    MIN_LONGITUDE +
+    LONGITUDE_RANGE *
+      (((gridLongitudeNumber + 1) * 1.0) / Math.pow(2, 26));
+
+  // Calculate the center point of the grid cell
+  const latitude = (gridLatitudeMin + gridLatitudeMax) / 2;
+  const longitude = (gridLongitudeMin + gridLongitudeMax) / 2;
+
+  return new DecodeCoordinates(latitude, longitude);
+}
+
+function decodeGeohash(geoCode: bigint): DecodeCoordinates {
+  // Align bits of both latitude and longitude to take even-numbered position
+  const y = geoCode >> 1n;
+  const x = geoCode;
+
+  // Compact bits back to 32-bit ints
+  const gridLatitudeNumber = decodeCompactInt64ToInt32(x);
+  const gridLongitudeNumber = decodeCompactInt64ToInt32(y);
+
+  return decodeConvertGridNumbersToCoordinates(
+    gridLatitudeNumber,
+    gridLongitudeNumber
+  );
+}
+
+
+function spread32BitsTo64Bits(v: number): bigint {
+  let result = BigInt(v) & 0xffffffffn;
+  result = (result | (result << 16n)) & 0x0000ffff0000ffffn;
+  result = (result | (result << 8n)) & 0x00ff00ff00ff00ffn;
+  result = (result | (result << 4n)) & 0x0f0f0f0f0f0f0f0fn;
+  result = (result | (result << 2n)) & 0x3333333333333333n;
+  result = (result | (result << 1n)) & 0x5555555555555555n;
+  return result;
+}
+
+function interleaveBits(x: number, y: number): bigint {
+  const xSpread = spread32BitsTo64Bits(x);
+  const ySpread = spread32BitsTo64Bits(y);
+  const yShifted = ySpread << 1n;
+  return xSpread | yShifted;
+}
+
+function encodeGeoHash(latitude: number, longitude: number): bigint {
+  // Normalize to the range 0-2^26
+  const normalizedLatitude =
+    (Math.pow(2, 26) * (latitude - MIN_LATITUDE)) /
+    LATITUDE_RANGE;
+  const normalizedLongitude =
+    (Math.pow(2, 26) * (longitude - MIN_LONGITUDE)) /
+    LONGITUDE_RANGE;
+
+  // Truncate to integers
+  const latInt = Math.floor(normalizedLatitude);
+  const lonInt = Math.floor(normalizedLongitude);
+
+  return interleaveBits(latInt, lonInt);
+}
+
 export class GeoCommands {
   private kvStore: Map<string, KeyValueEntry>;
 
@@ -28,29 +126,6 @@ export class GeoCommands {
     return entry.value as Map<string, number>;
   }
 
-  // Convert longitude/latitude to geohash (simplified implementation)
-  private encodeGeohash(longitude: number, latitude: number): number {
-    // This is a simplified geohash implementation
-    // In Redis, coordinates are encoded as 52-bit geohash and stored as sorted set scores
-
-    // Normalize coordinates to [0, 1] range
-    const normalizedLon = (longitude + 180.0) / 360.0;
-    const normalizedLat = (latitude + 90.0) / 180.0;
-
-    // Simple interleaving of bits (simplified geohash)
-    // This is not the full Redis implementation but works for basic functionality
-    let geohash = 0;
-    let lonBits = Math.floor(normalizedLon * 0x1fffff); // 21 bits
-    let latBits = Math.floor(normalizedLat * 0x1fffff); // 21 bits
-
-    // Interleave the bits (simplified)
-    for (let i = 0; i < 21; i++) {
-      geohash |=
-        ((lonBits & (1 << i)) << i) | ((latBits & (1 << i)) << (i + 1));
-    }
-
-    return geohash;
-  }
 
   // Sort and rebuild the map to maintain sorted order (same as sorted sets)
   private rebuildSortedOrder(geoSet: Map<string, number>): void {
@@ -94,15 +169,16 @@ export class GeoCommands {
         }
 
         // Validate coordinate ranges
-        if (longitude < -180 || longitude > 180) {
+        if (longitude < MIN_LONGITUDE || longitude > MAX_LONGITUDE) {
           return encodeError("ERR invalid longitude");
         }
-        if (latitude < -85.05112878 || latitude > 85.05112878) {
+        if (latitude < MIN_LATITUDE || latitude > MAX_LATITUDE) {
           return encodeError("ERR invalid latitude");
         }
 
-        // Encode coordinates as geohash
-        const geohash = this.encodeGeohash(longitude, latitude);
+        // Encode coordinates as geohash (returns BigInt, convert to number)
+        const geohashBigInt = encodeGeoHash(latitude, longitude);
+        const geohash = Number(geohashBigInt);
 
         // Check if member already exists
         const wasNew = !geoSet.has(member);
