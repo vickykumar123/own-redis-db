@@ -142,6 +142,29 @@ export class GeoCommands {
     }
   }
 
+  private radians(degree: number) {
+    // degrees to radians
+    let rad: number = (degree * Math.PI) / 180;
+
+    return rad;
+  }
+
+  private haversine(lat1: number, lon1: number, lat2: number, lon2: number) {
+    // var dlat: number, dlon: number, a: number, c: number, R: number;
+    let dlat, dlon, a, c, R: number;
+
+    R = 6372.8; // km
+    dlat = this.radians(lat2 - lat1);
+    dlon = this.radians(lon2 - lon1);
+    lat1 = this.radians(lat1);
+    lat2 = this.radians(lat2);
+    a =
+      Math.sin(dlat / 2) * Math.sin(dlat / 2) +
+      Math.sin(dlon / 2) * Math.sin(dlon / 2) * Math.cos(lat1) * Math.cos(lat2);
+    c = 2 * Math.asin(Math.sqrt(a));
+    return R * c;
+  }
+
   // GEOADD key longitude latitude member [longitude latitude member ...]
   handleGeoAdd(args: string[]): string {
     if (args.length < 4 || (args.length - 1) % 3 !== 0) {
@@ -231,7 +254,7 @@ export class GeoCommands {
           // Return [longitude, latitude] as strings
           response.push([
             decodedHash.longitude.toString(),
-            decodedHash.latitude.toString()
+            decodedHash.latitude.toString(),
           ]);
         }
       }
@@ -251,5 +274,38 @@ export class GeoCommands {
     }
 
     return result;
+  }
+
+  handleGeoDist(args: string[]): string {
+    if (args.length < 3) {
+      return encodeError("ERR wrong number of arguments for 'geodist' command");
+    }
+
+    const key = args[0];
+    const loc1 = args[1];
+    const loc2 = args[2];
+
+    const entry = this.kvStore.get(key);
+    if (!entry) {
+      return encodeBulkString(null);
+    }
+
+    const geoLocs = entry.value;
+    if (!geoLocs.has(loc1) || !geoLocs.has(loc2)) {
+      return encodeBulkString(null);
+    }
+
+    const loc1GeoHash = geoLocs.get(loc1);
+    const loc2GeoHash = geoLocs.get(loc2);
+    const decodedLoc1 = decodeGeohash(loc1GeoHash);
+    const decodedLoc2 = decodeGeohash(loc2GeoHash);
+
+    const distance = this.haversine(
+      decodedLoc1.latitude,
+      decodedLoc1.longitude,
+      decodedLoc2.latitude,
+      decodedLoc2.longitude
+    );
+    return encodeBulkString(distance.toString());
   }
 }
