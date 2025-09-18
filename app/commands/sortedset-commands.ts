@@ -207,7 +207,7 @@ export class SortedSetCommands {
     const key = args[0];
     const entry = this.kvStore.get(key);
     if (!entry) {
-      return encodeArray([]); // Empty array for non-existent key
+      return encodeInteger(0); // Empty array for non-existent key
     }
 
     if (entry.type && entry.type !== "zset") {
