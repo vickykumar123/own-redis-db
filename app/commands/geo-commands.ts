@@ -202,26 +202,54 @@ export class GeoCommands {
 
   handleGeoPos(args: string[]): string {
     if (args.length < 2) {
-      return encodeError("Invaild arguments length");
+      return encodeError("ERR wrong number of arguments for 'geopos' command");
     }
 
     const key = args[0];
-    const location = args[1];
+    const members = args.slice(1); // Get all members after the key
 
     const entry = this.kvStore.get(key);
-    if (!entry) {
-      return encodeArray(null);
+
+    // Build response array - one entry per member
+    const response: (string[] | null)[] = [];
+
+    for (const member of members) {
+      if (!entry || entry.type !== "zset") {
+        // If key doesn't exist or wrong type, return null for this member
+        response.push(null);
+      } else {
+        const geoSet = entry.value as Map<string, number>;
+
+        if (!geoSet.has(member)) {
+          // Member doesn't exist, return null
+          response.push(null);
+        } else {
+          // Decode the geohash to get coordinates
+          const geoHash = geoSet.get(member)!;
+          const decodedHash = decodeGeohash(BigInt(geoHash));
+
+          // Return [longitude, latitude] as strings
+          response.push([
+            decodedHash.longitude.toString(),
+            decodedHash.latitude.toString()
+          ]);
+        }
+      }
     }
 
-    const geoLoc = entry.value;
-    if (!geoLoc.has(location)) {
-      return encodeArray(null);
+    // Encode the array of arrays
+    let result = `*${response.length}\r\n`;
+    for (const item of response) {
+      if (item === null) {
+        result += "$-1\r\n"; // Null bulk string
+      } else {
+        // Each position is an array of [longitude, latitude]
+        result += "*2\r\n";
+        result += encodeBulkString(item[0]); // longitude
+        result += encodeBulkString(item[1]); // latitude
+      }
     }
-    const geoHash = geoLoc.get(location);
-    const decodedHash = decodeGeohash(geoHash);
-    const response = [];
-    response.push(encodeBulkString(decodedHash.longitude.toString()));
-    response.push(encodeBulkString(decodedHash.latitude.toString()));
-    return encodeArray(response);
+
+    return result;
   }
 }
