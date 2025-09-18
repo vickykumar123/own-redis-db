@@ -277,35 +277,57 @@ export class GeoCommands {
   }
 
   handleGeoDist(args: string[]): string {
-    if (args.length < 3) {
+    if (args.length < 3 || args.length > 4) {
       return encodeError("ERR wrong number of arguments for 'geodist' command");
     }
 
     const key = args[0];
-    const loc1 = args[1];
-    const loc2 = args[2];
+    const member1 = args[1];
+    const member2 = args[2];
+    const unit = args.length === 4 ? args[3].toLowerCase() : "m"; // Default to meters
 
     const entry = this.kvStore.get(key);
-    if (!entry) {
+    if (!entry || entry.type !== "zset") {
       return encodeBulkString(null);
     }
 
-    const geoLocs = entry.value;
-    if (!geoLocs.has(loc1) || !geoLocs.has(loc2)) {
+    const geoSet = entry.value as Map<string, number>;
+    if (!geoSet.has(member1) || !geoSet.has(member2)) {
       return encodeBulkString(null);
     }
 
-    const loc1GeoHash = geoLocs.get(loc1);
-    const loc2GeoHash = geoLocs.get(loc2);
-    const decodedLoc1 = decodeGeohash(loc1GeoHash);
-    const decodedLoc2 = decodeGeohash(loc2GeoHash);
+    const geoHash1 = geoSet.get(member1)!;
+    const geoHash2 = geoSet.get(member2)!;
+    const decodedLoc1 = decodeGeohash(BigInt(geoHash1));
+    const decodedLoc2 = decodeGeohash(BigInt(geoHash2));
 
-    const distance = this.haversine(
+    // Haversine returns distance in kilometers
+    const distanceKm = this.haversine(
       decodedLoc1.latitude,
       decodedLoc1.longitude,
       decodedLoc2.latitude,
       decodedLoc2.longitude
     );
+
+    // Convert to requested unit
+    let distance: number;
+    switch (unit) {
+      case "m":
+        distance = distanceKm * 1000; // km to meters
+        break;
+      case "km":
+        distance = distanceKm;
+        break;
+      case "mi":
+        distance = distanceKm * 0.621371; // km to miles
+        break;
+      case "ft":
+        distance = distanceKm * 3280.84; // km to feet
+        break;
+      default:
+        return encodeError("ERR unsupported unit provided. please use m, km, mi, or ft");
+    }
+
     return encodeBulkString(distance.toString());
   }
 }
