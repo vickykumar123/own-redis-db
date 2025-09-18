@@ -14,6 +14,7 @@ import {StreamCommands} from "./commands/stream-commands";
 import {ReplicationManager} from "./commands/replication-manager";
 import {PubSubCommands} from "./commands/pubsub-commands";
 import {SortedSetCommands} from "./commands/sortedset-commands";
+import {GeoCommands} from "./commands/geo-commands";
 import {type ServerConfig, DEFAULT_SERVER_CONFIG} from "./config/server-config";
 
 // Enhanced key-value store with expiry support
@@ -43,6 +44,7 @@ export class RedisCommands {
   private replicationManager: ReplicationManager;
   private pubsubCommands: PubSubCommands;
   private sortedSetCommands: SortedSetCommands;
+  private geoCommands: GeoCommands;
   private transactionState: Map<string, boolean> = new Map(); // Per-connection transaction state
   private commandQueues: Map<string, QueuedCommand[]> = new Map(); // Per-connection command queues
   private executingTransaction = false; // Flag to bypass transaction logic during EXEC
@@ -61,6 +63,7 @@ export class RedisCommands {
     this.streamCommands = new StreamCommands(this.kvStore);
     this.pubsubCommands = new PubSubCommands(this.subscriptions);
     this.sortedSetCommands = new SortedSetCommands(this.kvStore);
+    this.geoCommands = new GeoCommands(this.kvStore);
     this.rdbDir = rdbDir;
     this.rdbFilename = rdbFilename;
 
@@ -216,6 +219,9 @@ export class RedisCommands {
         break;
       case "ZREM":
         response = this.sortedSetCommands.handleZRem(args);
+        break;
+      case "GEOADD":
+        response = this.geoCommands.handleGeoAdd(args);
         break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
@@ -583,6 +589,7 @@ export class RedisCommands {
       "ZADD",
       "ZREM",
       "ZINCRBY",
+      "GEOADD",
     ];
     return writeCommands.includes(command.toUpperCase());
   }
