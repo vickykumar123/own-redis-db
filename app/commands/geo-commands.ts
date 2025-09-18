@@ -153,7 +153,7 @@ export class GeoCommands {
     // var dlat: number, dlon: number, a: number, c: number, R: number;
     let dlat, dlon, a, c, R: number;
 
-    R = 6372.8; // km
+    R = 6372797.560856; // Earth radius in meters (Redis uses this value)
     dlat = this.radians(lat2 - lat1);
     dlon = this.radians(lon2 - lon1);
     lat1 = this.radians(lat1);
@@ -162,7 +162,7 @@ export class GeoCommands {
       Math.sin(dlat / 2) * Math.sin(dlat / 2) +
       Math.sin(dlon / 2) * Math.sin(dlon / 2) * Math.cos(lat1) * Math.cos(lat2);
     c = 2 * Math.asin(Math.sqrt(a));
-    return R * c;
+    return R * c; // Returns distance in meters
   }
 
   // GEOADD key longitude latitude member [longitude latitude member ...]
@@ -301,8 +301,8 @@ export class GeoCommands {
     const decodedLoc1 = decodeGeohash(BigInt(geoHash1));
     const decodedLoc2 = decodeGeohash(BigInt(geoHash2));
 
-    // Haversine returns distance in kilometers
-    const distanceKm = this.haversine(
+    // Haversine returns distance in meters
+    const distanceMeters = this.haversine(
       decodedLoc1.latitude,
       decodedLoc1.longitude,
       decodedLoc2.latitude,
@@ -313,16 +313,16 @@ export class GeoCommands {
     let distance: number;
     switch (unit) {
       case "m":
-        distance = distanceKm * 1000; // km to meters
+        distance = distanceMeters; // Already in meters
         break;
       case "km":
-        distance = distanceKm;
+        distance = distanceMeters / 1000; // meters to km
         break;
       case "mi":
-        distance = distanceKm * 0.621371; // km to miles
+        distance = distanceMeters / 1609.344; // meters to miles
         break;
       case "ft":
-        distance = distanceKm * 3280.84; // km to feet
+        distance = distanceMeters * 3.28084; // meters to feet
         break;
       default:
         return encodeError("ERR unsupported unit provided. please use m, km, mi, or ft");
