@@ -58,6 +58,30 @@ function parseServerArgs(): {
     rdbFilename = rdbFilenameValue;
   }
 
+  // Parse AOF options
+  const appendonlyIndex = process.argv.indexOf("--appendonly");
+  const aofEnabled = appendonlyIndex !== -1;
+
+  const aofFilenameIndex = process.argv.indexOf("--appendfilename");
+  const aofFilename = aofFilenameIndex !== -1 && process.argv.length > aofFilenameIndex + 1
+    ? process.argv[aofFilenameIndex + 1]
+    : "appendonly.aof";
+
+  const aofDirIndex = process.argv.indexOf("--aof-dir");
+  const aofDir = aofDirIndex !== -1 && process.argv.length > aofDirIndex + 1
+    ? process.argv[aofDirIndex + 1]
+    : rdbDirValue || ".";
+
+  // Add AOF config to overrides if enabled
+  if (aofEnabled) {
+    configOverrides.aof = {
+      enabled: true,
+      filename: aofFilename,
+      dir: aofDir,
+      syncPolicy: "everysec"
+    };
+  }
+
   return {
     port,
     config: createServerConfig({
@@ -72,13 +96,30 @@ function parseServerArgs(): {
 const {port, config, rdbDirValue, rdbFilename} = parseServerArgs();
 const redisCommands = new RedisCommands(config, rdbDirValue, rdbFilename);
 
-// Start replication handshake if this server is a replica
-if (config.role === "slave") {
-  // Initiate handshake in background, don't block server startup
-  redisCommands.initiateReplicationHandshake().catch((error) => {
-    console.error("Failed to complete replication handshake:", error);
-  });
+// Initialize from AOF if enabled
+async function initializeServer() {
+  try {
+    // Replay AOF commands if AOF is enabled
+    if (config.aof?.enabled) {
+      console.log("[MAIN] Initializing from AOF file...");
+      await redisCommands.initializeFromAOF();
+    }
+
+    // Start replication handshake if this server is a replica
+    if (config.role === "slave") {
+      // Initiate handshake in background, don't block server startup
+      redisCommands.initiateReplicationHandshake().catch((error) => {
+        console.error("Failed to complete replication handshake:", error);
+      });
+    }
+  } catch (error) {
+    console.error("[MAIN] Failed to initialize server:", error);
+    process.exit(1);
+  }
 }
+
+// Initialize the server
+initializeServer();
 
 const server: net.Server = net.createServer((socket: net.Socket) => {
   // Handle connection
@@ -139,3 +180,22 @@ const server: net.Server = net.createServer((socket: net.Socket) => {
 });
 
 server.listen(port, "127.0.0.1");
+
+// Handle graceful shutdown
+process.on('SIGINT', () => {
+  console.log('\n[MAIN] Shutting down server...');
+  redisCommands.shutdown();
+  server.close(() => {
+    console.log('[MAIN] Server closed');
+    process.exit(0);
+  });
+});
+
+process.on('SIGTERM', () => {
+  console.log('[MAIN] Shutting down server...');
+  redisCommands.shutdown();
+  server.close(() => {
+    console.log('[MAIN] Server closed');
+    process.exit(0);
+  });
+});

@@ -21,8 +21,15 @@ export interface ServerConfig {
   minReplicas?: number; // Minimum replicas for WAIT
   replicaTimeout?: number; // Timeout for replica responses
 
+  // AOF (Append Only File) configuration
+  aof?: {
+    enabled: boolean;
+    filename: string;
+    dir: string;
+    syncPolicy: "always" | "everysec" | "no";
+  };
+
   // Future: Additional server configurations can be added here
-  // persistence?: PersistenceConfig;
   // cluster?: ClusterConfig;
   // security?: SecurityConfig;
 }
@@ -32,6 +39,12 @@ export const DEFAULT_SERVER_CONFIG: ServerConfig = {
   replicationOffset: 0,
   minReplicas: 0,
   replicaTimeout: 1000, // 1 second default
+  aof: {
+    enabled: false,
+    filename: "appendonly.aof",
+    dir: ".",
+    syncPolicy: "everysec"
+  }
 };
 
 // Helper function to create server config

@@ -16,6 +16,7 @@ import {PubSubCommands} from "./commands/pubsub-commands";
 import {SortedSetCommands} from "./commands/sortedset-commands";
 import {GeoCommands} from "./commands/geo-commands";
 import {type ServerConfig, DEFAULT_SERVER_CONFIG} from "./config/server-config";
+import {AOFManager} from "./aof-manager";
 
 // Enhanced key-value store with expiry support
 export interface KeyValueEntry {
@@ -45,6 +46,7 @@ export class RedisCommands {
   private pubsubCommands: PubSubCommands;
   private sortedSetCommands: SortedSetCommands;
   private geoCommands: GeoCommands;
+  private aofManager: AOFManager;
   private transactionState: Map<string, boolean> = new Map(); // Per-connection transaction state
   private commandQueues: Map<string, QueuedCommand[]> = new Map(); // Per-connection command queues
   private executingTransaction = false; // Flag to bypass transaction logic during EXEC
@@ -64,6 +66,14 @@ export class RedisCommands {
     this.pubsubCommands = new PubSubCommands(this.subscriptions);
     this.sortedSetCommands = new SortedSetCommands(this.kvStore);
     this.geoCommands = new GeoCommands(this.kvStore);
+
+    // Initialize AOF manager
+    this.aofManager = new AOFManager({
+      enabled: config.aof?.enabled ?? false,
+      filename: config.aof?.filename ?? "appendonly.aof",
+      dir: config.aof?.dir ?? ".",
+      syncPolicy: config.aof?.syncPolicy ?? "everysec",
+    });
     this.rdbDir = rdbDir;
     this.rdbFilename = rdbFilename;
 
@@ -236,7 +246,7 @@ export class RedisCommands {
         response = encodeError(`ERR unknown command '${command}'`);
     }
 
-    // Propagate write commands to replicas (only if this is the master ,not during transaction execution and not an error response(-) and not a replica itself because replicas don't propagate)
+    // Log write commands to AOF (only successful commands, not during transaction execution, and not from replicas)
     if (
       response &&
       !this.executingTransaction &&
@@ -244,6 +254,10 @@ export class RedisCommands {
       !response.startsWith("-") &&
       !this.replicationManager.isReplica()
     ) {
+      // Log to AOF
+      this.aofManager.appendCommand(command, args);
+
+      // Propagate to replicas
       console.log(
         `[MASTER] Propagating command to replicas: ${command} ${args.join(" ")}`
       );
@@ -709,6 +723,23 @@ export class RedisCommands {
     console.log(`Loaded ${rdbKeys.length} keys from RDB file`);
   }
 
+  // Initialize AOF replay on startup
+  async initializeFromAOF(): Promise<void> {
+    try {
+      const commandExecutor = async (command: string, args: string[]) => {
+        // Create a mock socket for AOF replay
+        const mockSocket = {} as net.Socket;
+        await this.executeCommand(command, args, mockSocket);
+      };
+
+      const replayedCommands = await this.aofManager.replayCommands(commandExecutor);
+      console.log(`[AOF] Initialization complete. Replayed ${replayedCommands} commands.`);
+    } catch (error) {
+      console.error('[AOF] Failed to initialize from AOF:', error);
+      throw error;
+    }
+  }
+
   // Clean up connection when client disconnects
   cleanupConnection(socket: net.Socket): void {
     const connectionId = this.getConnectionId(socket);
@@ -716,6 +747,12 @@ export class RedisCommands {
     this.transactionState.delete(connectionId);
     this.commandQueues.delete(connectionId);
     console.log(`[CLEANUP] Removed connection ${connectionId}`);
+  }
+
+  // Cleanup AOF on shutdown
+  shutdown(): void {
+    this.aofManager.close();
+    console.log('[REDIS] Server shutdown complete');
   }
 
   // For testing or debugging
