@@ -149,6 +149,43 @@ export class GeoCommands {
     return rad;
   }
 
+  // Convert distance from meters to specified unit
+  private convertFromMeters(meters: number, unit: string): number {
+    switch (unit.toLowerCase()) {
+      case "m":
+        return meters;
+      case "km":
+        return meters / 1000;
+      case "mi":
+        return meters / 1609.344;
+      case "ft":
+        return meters * 3.28084;
+      default:
+        throw new Error(`Unsupported unit: ${unit}`);
+    }
+  }
+
+  // Convert distance from specified unit to meters
+  private convertToMeters(distance: number, unit: string): number {
+    switch (unit.toLowerCase()) {
+      case "m":
+        return distance;
+      case "km":
+        return distance * 1000;
+      case "mi":
+        return distance * 1609.344;
+      case "ft":
+        return distance / 3.28084;
+      default:
+        throw new Error(`Unsupported unit: ${unit}`);
+    }
+  }
+
+  // Validate if unit is supported
+  private isValidUnit(unit: string): boolean {
+    return ["m", "km", "mi", "ft"].includes(unit.toLowerCase());
+  }
+
   private haversine(lat1: number, lon1: number, lat2: number, lon2: number) {
     // var dlat: number, dlon: number, a: number, c: number, R: number;
     let dlat, dlon, a, c, R: number;
@@ -284,7 +321,12 @@ export class GeoCommands {
     const key = args[0];
     const member1 = args[1];
     const member2 = args[2];
-    const unit = args.length === 4 ? args[3].toLowerCase() : "m"; // Default to meters
+    const unit = args.length === 4 ? args[3] : "m"; // Default to meters
+
+    // Validate unit
+    if (!this.isValidUnit(unit)) {
+      return encodeError("ERR unsupported unit provided. please use m, km, mi, or ft");
+    }
 
     const entry = this.kvStore.get(key);
     if (!entry || entry.type !== "zset") {
@@ -309,25 +351,75 @@ export class GeoCommands {
       decodedLoc2.longitude
     );
 
-    // Convert to requested unit
-    let distance: number;
-    switch (unit) {
-      case "m":
-        distance = distanceMeters; // Already in meters
-        break;
-      case "km":
-        distance = distanceMeters / 1000; // meters to km
-        break;
-      case "mi":
-        distance = distanceMeters / 1609.344; // meters to miles
-        break;
-      case "ft":
-        distance = distanceMeters * 3.28084; // meters to feet
-        break;
-      default:
-        return encodeError("ERR unsupported unit provided. please use m, km, mi, or ft");
-    }
+    // Convert to requested unit using reusable function
+    const distance = this.convertFromMeters(distanceMeters, unit);
 
     return encodeBulkString(distance.toString());
+  }
+
+  // GEOSEARCH key FROMLONLAT longitude latitude BYRADIUS radius unit
+  handleGeoSearch(args: string[]): string {
+    if (args.length !== 7) {
+      return encodeError("ERR wrong number of arguments for 'geosearch' command");
+    }
+
+    const key = args[0];
+    const fromLonLatKeyword = args[1].toUpperCase();
+    const centerLon = parseFloat(args[2]);
+    const centerLat = parseFloat(args[3]);
+    const byRadiusKeyword = args[4].toUpperCase();
+    const radius = parseFloat(args[5]);
+    const unit = args[6].toLowerCase();
+
+    // Validate keywords
+    if (fromLonLatKeyword !== "FROMLONLAT") {
+      return encodeError("ERR syntax error: expected FROMLONLAT");
+    }
+    if (byRadiusKeyword !== "BYRADIUS") {
+      return encodeError("ERR syntax error: expected BYRADIUS");
+    }
+
+    // Validate numeric inputs
+    if (isNaN(centerLon) || isNaN(centerLat) || isNaN(radius)) {
+      return encodeError("ERR value is not a valid float");
+    }
+
+    // Validate unit
+    if (!this.isValidUnit(unit)) {
+      return encodeError("ERR unsupported unit provided. please use m, km, mi, or ft");
+    }
+
+    // Get the geo set
+    const entry = this.kvStore.get(key);
+    if (!entry || entry.type !== "zset") {
+      return encodeArray([]); // Empty array for non-existent key
+    }
+
+    const geoSet = entry.value as Map<string, number>;
+    const matchingMembers: string[] = [];
+
+    // Convert radius to meters for consistent calculation
+    const radiusInMeters = this.convertToMeters(radius, unit);
+
+    // Check each member's distance from center point
+    for (const [member, geoHash] of geoSet) {
+      // Decode member's coordinates
+      const decodedLocation = decodeGeohash(BigInt(geoHash));
+
+      // Calculate distance from center point to this member
+      const distanceInMeters = this.haversine(
+        centerLat,
+        centerLon,
+        decodedLocation.latitude,
+        decodedLocation.longitude
+      );
+
+      // If within radius, add to results
+      if (distanceInMeters <= radiusInMeters) {
+        matchingMembers.push(member);
+      }
+    }
+
+    return encodeArray(matchingMembers);
   }
 }

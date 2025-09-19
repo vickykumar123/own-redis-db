@@ -229,6 +229,9 @@ export class RedisCommands {
       case "GEODIST":
         response = this.geoCommands.handleGeoDist(args);
         break;
+      case "GEOSEARCH":
+        response = this.geoCommands.handleGeoSearch(args);
+        break;
       default:
         response = encodeError(`ERR unknown command '${command}'`);
     }
