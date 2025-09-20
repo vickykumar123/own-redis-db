@@ -732,10 +732,14 @@ export class RedisCommands {
         await this.executeCommand(command, args, mockSocket);
       };
 
-      const replayedCommands = await this.aofManager.replayCommands(commandExecutor);
-      console.log(`[AOF] Initialization complete. Replayed ${replayedCommands} commands.`);
+      const replayedCommands = await this.aofManager.replayCommands(
+        commandExecutor
+      );
+      console.log(
+        `[AOF] Initialization complete. Replayed ${replayedCommands} commands.`
+      );
     } catch (error) {
-      console.error('[AOF] Failed to initialize from AOF:', error);
+      console.error("[AOF] Failed to initialize from AOF:", error);
       throw error;
     }
   }
@@ -752,7 +756,7 @@ export class RedisCommands {
   // Cleanup AOF on shutdown
   shutdown(): void {
     this.aofManager.close();
-    console.log('[REDIS] Server shutdown complete');
+    console.log("[REDIS] Server shutdown complete");
   }
 
   // For testing or debugging
